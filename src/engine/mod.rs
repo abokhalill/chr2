@@ -1,3 +1,4 @@
+pub mod disk;
 pub mod durability;
 pub mod errors;
 pub mod fault_injection;
