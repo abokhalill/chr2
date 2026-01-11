@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use crate::engine::disk::{LogEntry, SyncDisk, VirtualDisk};
 use crate::engine::log::LogWriter;
 
 /// Unique identifier for a durability request batch.
@@ -266,6 +267,17 @@ impl DurabilityWorker {
 
     /// Spawn the worker thread with an existing LogWriter.
     fn spawn_with_writer(writer: LogWriter, initial_next_index: u64) -> std::io::Result<Self> {
+        let disk = Box::new(SyncDisk::new(writer));
+        Self::spawn_with_disk(disk, initial_next_index)
+    }
+
+    /// Spawn the worker thread with a VirtualDisk implementation.
+    ///
+    /// This is the unified entry point that works with any disk backend.
+    pub fn spawn_with_disk(
+        disk: Box<dyn VirtualDisk>,
+        initial_next_index: u64,
+    ) -> std::io::Result<Self> {
         let (request_tx, request_rx) = mpsc::channel::<DurabilityRequest>();
         let (completion_tx, completion_rx) = mpsc::channel::<DurabilityCompletion>();
 
@@ -288,7 +300,7 @@ impl DurabilityWorker {
         let thread_handle = thread::Builder::new()
             .name("durability-worker".to_string())
             .spawn(move || {
-                Self::worker_loop(writer, request_rx, completion_tx, running_clone, stall_flag_clone);
+                Self::disk_worker_loop(disk, request_rx, completion_tx, running_clone, stall_flag_clone);
             })
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
@@ -300,18 +312,16 @@ impl DurabilityWorker {
         })
     }
 
-    /// The main worker loop - runs in a dedicated thread.
-    fn worker_loop(
-        mut writer: LogWriter,
+    /// The main worker loop using VirtualDisk - runs in a dedicated thread.
+    fn disk_worker_loop(
+        mut disk: Box<dyn VirtualDisk>,
         request_rx: Receiver<DurabilityRequest>,
         completion_tx: Sender<DurabilityCompletion>,
         running: Arc<AtomicBool>,
         stall_flag: Arc<AtomicBool>,
     ) {
-        // Transfer ownership of the LogWriter to this thread.
-        // This is safe because the LogWriter was moved into this thread
-        // and no other thread has access to it.
-        writer.transfer_ownership();
+        // Transfer ownership of the disk to this thread.
+        disk.transfer_ownership();
         
         while running.load(Ordering::SeqCst) {
             match request_rx.recv() {
@@ -322,7 +332,7 @@ impl DurabilityWorker {
                         }
                     }
 
-                    let completion = Self::process_request(&mut writer, request);
+                    let completion = Self::process_disk_request(disk.as_mut(), request);
                     
                     // If shutdown, exit after processing
                     if completion.is_none() {
@@ -346,11 +356,11 @@ impl DurabilityWorker {
         running.store(false, Ordering::SeqCst);
     }
 
-    /// Process a single durability request.
+    /// Process a single durability request using VirtualDisk.
     ///
     /// Returns None for Shutdown, Some(completion) for other requests.
-    fn process_request(
-        writer: &mut LogWriter,
+    fn process_disk_request(
+        disk: &mut dyn VirtualDisk,
         request: DurabilityRequest,
     ) -> Option<DurabilityCompletion> {
         match request {
@@ -360,26 +370,30 @@ impl DurabilityWorker {
                 timestamp_ns,
                 reserved_start_index,
             } => {
-                // INVARIANT: Reserved index must match writer's next_index
-                // This ensures the handle's atomic reservation is consistent with
-                // the actual log state. Mismatch indicates a bug or corruption.
-                let writer_next_index = writer.next_index();
-                if writer_next_index != reserved_start_index {
+                // INVARIANT: Reserved index must match disk's next_index
+                let disk_next_index = disk.next_index();
+                if disk_next_index != reserved_start_index {
                     panic!(
                         "FATAL: DurabilityWorker index mismatch! \
-                         Reserved start_index={}, writer next_index={}. \
+                         Reserved start_index={}, disk next_index={}. \
                          This indicates a bug in index reservation or requests processed out of order.",
-                        reserved_start_index, writer_next_index
+                        reserved_start_index, disk_next_index
                     );
                 }
                 
-                let result = match writer.append_batch(&payloads, timestamp_ns) {
-                    Ok(last_index) => DurabilityResult::BatchSuccess {
+                // Convert payloads to LogEntry format
+                let entries: Vec<LogEntry> = payloads
+                    .into_iter()
+                    .map(|p| LogEntry::new(p, timestamp_ns))
+                    .collect();
+                
+                let result = match disk.submit_write_batch(&entries) {
+                    Ok(token) => DurabilityResult::BatchSuccess {
                         start_index: reserved_start_index,
-                        last_index,
+                        last_index: token.index(),
                     },
                     Err(e) => DurabilityResult::Error {
-                        message: format!("{}", e),
+                        message: e.to_string(),
                     },
                 };
                 Some(DurabilityCompletion { batch_id, result })
@@ -392,19 +406,20 @@ impl DurabilityWorker {
                 timestamp_ns,
                 reserved_index,
             } => {
-                // INVARIANT: Reserved index must match writer's next_index
-                let writer_next_index = writer.next_index();
-                if writer_next_index != reserved_index {
+                // INVARIANT: Reserved index must match disk's next_index
+                let disk_next_index = disk.next_index();
+                if disk_next_index != reserved_index {
                     panic!(
                         "FATAL: DurabilityWorker index mismatch! \
-                         Reserved index={}, writer next_index={}. \
+                         Reserved index={}, disk next_index={}. \
                          This indicates a bug in index reservation or requests processed out of order.",
-                        reserved_index, writer_next_index
+                        reserved_index, disk_next_index
                     );
                 }
                 
-                let result = match writer.append(&payload, stream_id, flags, timestamp_ns) {
-                    Ok(index) => DurabilityResult::AppendSuccess { index },
+                let entry = LogEntry::with_metadata(payload, stream_id, flags, timestamp_ns);
+                let result = match disk.submit_write(entry) {
+                    Ok(token) => DurabilityResult::AppendSuccess { index: token.index() },
                     Err(e) => DurabilityResult::Error {
                         message: e.to_string(),
                     },
