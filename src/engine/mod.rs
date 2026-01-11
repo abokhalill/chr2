@@ -1,3 +1,4 @@
+pub mod commit_index;
 pub mod disk;
 pub mod durability;
 pub mod errors;
