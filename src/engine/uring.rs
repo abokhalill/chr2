@@ -11,7 +11,7 @@ use std::thread::ThreadId;
 
 use crate::engine::errors::FatalError;
 use crate::engine::format::{
-    compute_chain_hash, create_sentinel, frame_size, LogHeader, LogMetadata,
+    calculate_padding, compute_chain_hash, create_sentinel, frame_size, LogHeader, LogMetadata,
     GENESIS_HASH, HEADER_SIZE, LOG_METADATA_SIZE, MAX_PAYLOAD_SIZE, SENTINEL_SIZE,
 };
 
@@ -330,8 +330,10 @@ impl IoUringWriter {
         
         // Serialize to buffer
         let header_bytes = header.as_bytes();
-        let padding_size = crate::engine::format::calculate_padding(payload.len() as u32);
-        let logical_size = HEADER_SIZE + payload.len() + padding_size;
+        let padding_size = calculate_padding(payload.len() as u32);
+        // Include sentinel in the write for recovery compatibility
+        let sentinel = create_sentinel(index);
+        let logical_size = HEADER_SIZE + payload.len() + padding_size + SENTINEL_SIZE;
         
         let offset = self.write_offset;
         
@@ -342,14 +344,16 @@ impl IoUringWriter {
             let aligned_size = (logical_size + DMA_ALIGNMENT - 1) & !(DMA_ALIGNMENT - 1);
             let mut dma_buf = pool.acquire(aligned_size)?;
             
-            // Write header + payload + padding
+            // Write header + payload + padding + sentinel
             dma_buf.write(header_bytes);
             dma_buf.write(payload);
-            // Pad to logical size (8-byte alignment)
-            let current_len = dma_buf.len();
-            if current_len < logical_size {
-                dma_buf.set_len(logical_size);
+            // Pad to 8-byte alignment
+            if padding_size > 0 {
+                let padding = [0u8; 8];
+                dma_buf.write(&padding[..padding_size]);
             }
+            // Write sentinel for recovery compatibility
+            dma_buf.write(&sentinel);
             // Pad to 4KB alignment for O_DIRECT
             dma_buf.pad_to_alignment();
             
@@ -385,11 +389,13 @@ impl IoUringWriter {
             self.write_offset += write_size as u64;
             self.writes_since_fsync += 1;
         } else {
-            // Standard mode: use regular Vec buffer
+            // Standard mode: use regular Vec buffer (includes sentinel)
             let mut buffer = vec![0u8; logical_size];
             buffer[..HEADER_SIZE].copy_from_slice(header_bytes);
             buffer[HEADER_SIZE..HEADER_SIZE + payload.len()].copy_from_slice(payload);
-            // Padding is already zeroed
+            // Padding is already zeroed, write sentinel at end
+            let sentinel_offset = HEADER_SIZE + payload.len() + padding_size;
+            buffer[sentinel_offset..sentinel_offset + SENTINEL_SIZE].copy_from_slice(&sentinel);
             
             // Submit write to ring
             let write_op = opcode::Write::new(types::Fd(self.fd), buffer.as_ptr(), logical_size as u32)
@@ -467,8 +473,10 @@ impl IoUringWriter {
             );
             
             let header_bytes = header.as_bytes();
-            let padding_size = crate::engine::format::calculate_padding(payload.len() as u32);
-            let logical_size = HEADER_SIZE + payload.len() + padding_size;
+            let padding_size = calculate_padding(payload.len() as u32);
+            // Include sentinel for recovery compatibility
+            let sentinel = create_sentinel(index);
+            let logical_size = HEADER_SIZE + payload.len() + padding_size + SENTINEL_SIZE;
             
             let offset = self.write_offset;
             
@@ -477,12 +485,14 @@ impl IoUringWriter {
                 let aligned_size = (logical_size + DMA_ALIGNMENT - 1) & !(DMA_ALIGNMENT - 1);
                 let mut dma_buf = self.dma_pool.as_mut().unwrap().acquire(aligned_size)?;
                 
+                // Write header + payload + padding + sentinel
                 dma_buf.write(header_bytes);
                 dma_buf.write(payload);
-                let current_len = dma_buf.len();
-                if current_len < logical_size {
-                    dma_buf.set_len(logical_size);
+                if padding_size > 0 {
+                    let padding = [0u8; 8];
+                    dma_buf.write(&padding[..padding_size]);
                 }
+                dma_buf.write(&sentinel);
                 dma_buf.pad_to_alignment();
                 
                 let write_size = dma_buf.len();
@@ -509,10 +519,13 @@ impl IoUringWriter {
                 self.pending_dma_buffers.push_back(dma_buf);
                 self.write_offset += write_size as u64;
             } else {
-                // Standard mode: use regular Vec buffer
+                // Standard mode: use regular Vec buffer (includes sentinel)
                 let mut buffer = vec![0u8; logical_size];
                 buffer[..HEADER_SIZE].copy_from_slice(header_bytes);
                 buffer[HEADER_SIZE..HEADER_SIZE + payload.len()].copy_from_slice(payload);
+                // Write sentinel at end
+                let sentinel_offset = HEADER_SIZE + payload.len() + padding_size;
+                buffer[sentinel_offset..sentinel_offset + SENTINEL_SIZE].copy_from_slice(&sentinel);
                 
                 let write_op = opcode::Write::new(types::Fd(self.fd), buffer.as_ptr(), logical_size as u32)
                     .offset(offset)
