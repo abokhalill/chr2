@@ -372,7 +372,7 @@ impl LogWriter {
     /// This method implements group commit for improved I/O throughput:
     /// - All entries in the batch are written with ONE pwritev call
     /// - All entries are made durable with ONE fdatasync call
-    /// - Intra-batch hash chaining is maintained (entry[i].prev_hash = chain_hash(entry[i-1]))
+    /// - Intra-batch hash chaining is maintained (entry\[i\].prev_hash = chain_hash(entry\[i-1\]))
     ///
     /// # Arguments
     /// * `payloads` - Slice of payloads to append as a batch

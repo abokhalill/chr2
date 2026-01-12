@@ -142,7 +142,7 @@ pub struct ChaosNetwork {
     /// Chaos configuration.
     config: Arc<RwLock<ChaosConfig>>,
     /// Senders to each node's inbox (after chaos processing).
-    /// Wrapped in Arc<RwLock> for sharing with processor thread and updating on revive.
+    /// Wrapped in `Arc<RwLock>` for sharing with processor thread and updating on revive.
     node_senders: Arc<RwLock<HashMap<u32, Sender<(u32, VsrMessage)>>>>,
     /// Receivers for each node's inbox (taken when endpoint is created).
     /// Wrapped in Mutex for interior mutability when used via Arc.
