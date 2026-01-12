@@ -3,9 +3,9 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
-use chr::engine::format::GENESIS_HASH;
-use chr::engine::log::LogWriter;
-use chr::engine::recovery::{LogRecovery, RecoveryOutcome};
+use chronon::engine::format::GENESIS_HASH;
+use chronon::engine::log::LogWriter;
+use chronon::engine::recovery::{LogRecovery, RecoveryOutcome};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 

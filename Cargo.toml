@@ -1,12 +1,12 @@
 [package]
-name = "chr"
+name = "chronon"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Deterministic execution kernel with crash-safe replication and exactly-once side effects"
 repository = "https://github.com/abokhalill/chr2"
 homepage = "https://github.com/abokhalill/chr2"
-documentation = "https://docs.rs/chr"
+documentation = "https://docs.rs/chronon"
 readme = "README.md"
 keywords = ["distributed", "replication", "consensus", "deterministic", "state-machine"]
 categories = ["database", "concurrency", "asynchronous"]

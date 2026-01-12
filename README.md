@@ -1,9 +1,9 @@
 # Chronon
 
 [![CI](https://github.com/abokhalill/chr2/actions/workflows/ci.yml/badge.svg)](https://github.com/abokhalill/chr2/actions/workflows/ci.yml)
-[![Crates.io](https://img.shields.io/crates/v/chr.svg)](https://crates.io/crates/chr)
-[![Documentation](https://docs.rs/chr/badge.svg)](https://docs.rs/chr)
-[![License](https://img.shields.io/crates/l/chr.svg)](LICENSE-MIT)
+[![Crates.io](https://img.shields.io/crates/v/chronon.svg)](https://crates.io/crates/chronon)
+[![Documentation](https://docs.rs/chronon/badge.svg)](https://docs.rs/chronon)
+[![License](https://img.shields.io/crates/l/chronon.svg)](LICENSE-MIT)
 
 Deterministic execution kernel with crash-safe replication and exactly-once side effects.
 
@@ -69,7 +69,7 @@ Jepsen-style testing: partitions, kills, clock skew.
 ## Usage
 
 ```rust
-use chr::kernel::traits::{ChrApplication, ApplyContext, Event, SideEffect, SnapshotStream};
+use chronon::kernel::traits::{ChrApplication, ApplyContext, Event, SideEffect, SnapshotStream};
 
 struct MyApp;
 
