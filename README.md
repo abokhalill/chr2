@@ -1,5 +1,10 @@
 # Chronon
 
+[![CI](https://github.com/abokhalill/chr2/actions/workflows/ci.yml/badge.svg)](https://github.com/abokhalill/chr2/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/chr.svg)](https://crates.io/crates/chr)
+[![Documentation](https://docs.rs/chr/badge.svg)](https://docs.rs/chr)
+[![License](https://img.shields.io/crates/l/chr.svg)](LICENSE-MIT)
+
 Deterministic execution kernel with crash-safe replication and exactly-once side effects.
 
 ## Guarantees

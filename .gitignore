@@ -1,0 +1,17 @@
+/target
+*.swp
+*.swo
+*~
+.DS_Store
+*.log
+.idea/
+.vscode/
+
+# Local documentation (not tracked in git)
+failure_model.md
+invariants.md
+kernel_interface.md
+log_format.md
+recovery.md
+snapshot_model.md
+write_path.md
