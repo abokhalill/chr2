@@ -1,6 +1,5 @@
 # Chronon
 
-[![CI](https://github.com/abokhalill/chr2/actions/workflows/ci.yml/badge.svg)](https://github.com/abokhalill/chr2/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/chronon.svg)](https://crates.io/crates/chronon)
 [![Documentation](https://docs.rs/chronon/badge.svg)](https://docs.rs/chronon)
 [![License](https://img.shields.io/crates/l/chronon.svg)](LICENSE-MIT)
