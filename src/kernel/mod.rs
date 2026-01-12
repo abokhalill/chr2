@@ -3,6 +3,7 @@ pub mod executor;
 pub mod side_effect_manager;
 pub mod snapshot;
 pub mod traits;
+pub mod vsr_authority;
 
 pub use bank::{BankApp, BankError, BankEvent, BankQuery, BankQueryResponse, BankState};
 pub use executor::{Executor, ExecutorStatus, FatalError, StepResult};

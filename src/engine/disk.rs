@@ -1,88 +1,46 @@
-//! VirtualDisk: Unified durability abstraction for Chronon.
-//!
-//! This module defines the core durability contract that all storage backends must implement.
-//! The key insight is that durability is a **barrier operation**, not an implicit property of writes.
-//!
-//! # Design Principles
-//!
-//! 1. **Explicit Durability**: Writes are speculative until a barrier is called.
-//! 2. **Uniform Semantics**: Whether using O_DSYNC, fdatasync, or io_uring fsync,
-//!    the API contract is identical.
-//! 3. **Single Authority**: Only `barrier()` establishes durability; `committed_index`
-//!    is updated only from barrier completion.
-//!
-//! # Comparison to TigerBeetle/FoundationDB
-//!
-//! - TigerBeetle: Makes durability barriers explicit and uniform across all IO paths.
-//! - FoundationDB: Storage layer has explicit commit boundaries; no mixing of
-//!   "implicit durability" with "explicit commit".
-//!
-//! This abstraction eliminates the previous contradiction where:
-//! - `LogWriter` relied on O_DSYNC (durability-by-open-flag)
-//! - `IoUringWriter` relied on explicit fsync (durability-by-barrier)
-//! - `Manifest` used fdatasync + rename (durability-by-protocol)
+//! Unified durability abstraction. Writes are speculative until barrier().
 
 use std::io;
 
 use crate::engine::errors::FatalError;
 
-/// Token representing a submitted but not-yet-durable write.
-///
-/// Tokens are ordered: a barrier on token T makes all writes with tokens <= T durable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WriteToken(pub u64);
 
 impl WriteToken {
-    /// Create a new write token from a log index.
     #[inline]
     pub fn from_index(index: u64) -> Self {
         WriteToken(index)
     }
 
-    /// Get the underlying index value.
     #[inline]
     pub fn index(&self) -> u64 {
         self.0
     }
 }
 
-/// Result of a durability barrier operation.
 #[derive(Debug, Clone, Copy)]
 pub struct BarrierResult {
-    /// The highest index that is now durable.
     pub durable_index: u64,
-    /// Number of entries made durable by this barrier.
     pub entries_synced: u64,
 }
 
-/// Completion notification for async disk operations.
 #[derive(Debug, Clone)]
 pub enum DiskCompletion {
-    /// A write has completed (but is not yet durable).
     WriteComplete { token: WriteToken },
-    /// A barrier has completed, making writes durable.
     BarrierComplete { result: BarrierResult },
-    /// An error occurred.
     Error { token: Option<WriteToken>, error: String },
 }
 
-/// Entry to be written to the log.
-///
-/// This struct owns the payload data and metadata needed to construct a log entry.
 #[derive(Debug, Clone)]
 pub struct LogEntry {
-    /// Payload bytes.
     pub payload: Vec<u8>,
-    /// Stream ID for multi-tenancy routing.
     pub stream_id: u64,
-    /// Entry flags.
     pub flags: u16,
-    /// Consensus timestamp (nanoseconds since epoch).
     pub timestamp_ns: u64,
 }
 
 impl LogEntry {
-    /// Create a new log entry with default stream_id and flags.
     pub fn new(payload: Vec<u8>, timestamp_ns: u64) -> Self {
         Self {
             payload,
@@ -92,7 +50,6 @@ impl LogEntry {
         }
     }
 
-    /// Create a new log entry with full metadata.
     pub fn with_metadata(payload: Vec<u8>, stream_id: u64, flags: u16, timestamp_ns: u64) -> Self {
         Self {
             payload,
@@ -103,126 +60,30 @@ impl LogEntry {
     }
 }
 
-/// The core durability abstraction for Chronon's storage layer.
-///
-/// # Contract
-///
-/// 1. **Ordering**: Writes are ordered by their returned `WriteToken`.
-/// 2. **Speculation**: Writes are speculative until a barrier completes.
-/// 3. **Barrier Semantics**: `barrier(token)` makes all writes with tokens <= `token` durable.
-/// 4. **Atomicity**: Each write is atomic (all-or-nothing at the entry level).
-/// 5. **Visibility**: `committed_index()` returns only indices that have passed a barrier.
-///
-/// # Implementations
-///
-/// - `SyncDisk`: Uses pwritev + O_DSYNC or fdatasync. Barrier is implicit or explicit.
-/// - `IoUringDisk`: Uses io_uring Write + Fsync. True async submission/completion.
-///
-/// # Thread Safety
-///
-/// Implementations enforce single-writer semantics. Only one thread may call
-/// write/barrier methods. `committed_index()` may be called from any thread.
+/// Single-writer durability contract. barrier() is the only durability operation.
 pub trait VirtualDisk: Send {
-    /// Submit a single entry for writing.
-    ///
-    /// The write is speculative until a barrier is called.
-    /// Returns a token that can be used to establish durability.
-    ///
-    /// # Errors
-    /// Returns an error if the write cannot be submitted (e.g., payload too large).
     fn submit_write(&mut self, entry: LogEntry) -> io::Result<WriteToken>;
-
-    /// Submit a batch of entries for writing.
-    ///
-    /// All entries are written with a single syscall where possible.
-    /// Returns the token for the last entry in the batch.
-    ///
-    /// # Errors
-    /// Returns an error if any entry cannot be submitted.
     fn submit_write_batch(&mut self, entries: &[LogEntry]) -> io::Result<WriteToken>;
-
-    /// Establish durability for all writes up to and including `up_to`.
-    ///
-    /// This is the **only** operation that makes writes durable.
-    /// After this returns successfully, all entries with tokens <= `up_to` are
-    /// guaranteed to survive a crash.
-    ///
-    /// # Semantics
-    ///
-    /// - Blocking implementations: This call blocks until durability is established.
-    /// - Async implementations: This submits the barrier and waits for completion.
-    ///
-    /// # Errors
-    /// Returns an error if durability cannot be established. This is a **fatal** error;
-    /// the caller should halt or retry with extreme caution.
     fn barrier(&mut self, up_to: WriteToken) -> Result<BarrierResult, FatalError>;
-
-    /// Establish durability for all pending writes.
-    ///
-    /// Convenience method equivalent to `barrier(highest_pending_token)`.
     fn barrier_all(&mut self) -> Result<BarrierResult, FatalError>;
-
-    /// Get the highest durable index.
-    ///
-    /// This value is updated **only** after a successful barrier.
-    /// Uses Acquire ordering for cross-thread visibility.
-    ///
-    /// Returns `None` if no entries have been made durable yet.
     fn committed_index(&self) -> Option<u64>;
-
-    /// Get the next index that will be assigned.
-    ///
-    /// This is speculative and may be ahead of `committed_index()`.
     fn next_index(&self) -> u64;
-
-    /// Get the current tail hash for chain continuity.
     fn tail_hash(&self) -> [u8; 16];
-
-    /// Get the current view ID.
     fn view_id(&self) -> u64;
-
-    /// Set the view ID for new entries.
     fn set_view_id(&mut self, view_id: u64);
-
-    /// Get the current write offset in the file.
     fn write_offset(&self) -> u64;
-
-    /// Transfer ownership to the current thread.
-    ///
-    /// Used when moving the disk to a dedicated worker thread.
     fn transfer_ownership(&mut self);
-
-    /// Truncate the log to the specified length.
-    ///
-    /// Used by recovery to remove torn writes.
     fn truncate(&mut self, len: u64) -> io::Result<()>;
 }
 
-/// Synchronous disk implementation using pwritev + O_DSYNC.
-///
-/// This wraps `LogWriter` and expresses its durability semantics through the
-/// `VirtualDisk` contract. With O_DSYNC, each pwritev is implicitly a barrier,
-/// but we still expose the barrier API for uniformity.
-///
-/// # Durability Model
-///
-/// - `submit_write`: Performs pwritev with O_DSYNC. Write is durable on return.
-/// - `barrier`: No-op for O_DSYNC (already durable), but updates committed_index.
-///
-/// This makes the "O_DSYNC means durable" assumption explicit in the type system.
+/// O_DSYNC wrapper. Each pwritev is implicitly a barrier.
 pub struct SyncDisk {
-    /// The underlying log writer.
     writer: crate::engine::log::LogWriter,
-    /// Highest token submitted (may be ahead of committed if not using O_DSYNC).
     highest_submitted: Option<WriteToken>,
-    /// Whether O_DSYNC is in use (barrier is implicit).
     o_dsync_enabled: bool,
 }
 
 impl SyncDisk {
-    /// Create a new SyncDisk wrapping an existing LogWriter.
-    ///
-    /// Assumes O_DSYNC is enabled (the default for LogWriter).
     pub fn new(writer: crate::engine::log::LogWriter) -> Self {
         Self {
             writer,
@@ -231,9 +92,6 @@ impl SyncDisk {
         }
     }
 
-    /// Create a SyncDisk with explicit O_DSYNC flag.
-    ///
-    /// If `o_dsync` is false, explicit barriers are required.
     pub fn with_dsync_flag(writer: crate::engine::log::LogWriter, o_dsync: bool) -> Self {
         Self {
             writer,
@@ -242,17 +100,14 @@ impl SyncDisk {
         }
     }
 
-    /// Get a reference to the underlying LogWriter.
     pub fn writer(&self) -> &crate::engine::log::LogWriter {
         &self.writer
     }
 
-    /// Get a mutable reference to the underlying LogWriter.
     pub fn writer_mut(&mut self) -> &mut crate::engine::log::LogWriter {
         &mut self.writer
     }
 
-    /// Consume self and return the underlying LogWriter.
     pub fn into_inner(self) -> crate::engine::log::LogWriter {
         self.writer
     }
@@ -483,33 +338,15 @@ mod tests {
     }
 }
 
-// =============================================================================
-// IoUringDisk: True async durability via io_uring
-// =============================================================================
-
-/// io_uring-based disk implementation with explicit barrier semantics.
-///
-/// Unlike `SyncDisk`, writes are truly asynchronous:
-/// - `submit_write` queues a write to the io_uring ring (non-blocking)
-/// - `barrier` submits an fsync and waits for completion
-///
-/// # Durability Model
-///
-/// - `submit_write`: Submits write to io_uring. NOT durable until barrier.
-/// - `barrier`: Submits fsync with IO_DRAIN, waits for completion.
-///
-/// This is the "true async" model that TigerBeetle uses.
+/// io_uring async wrapper. Writes are speculative until barrier().
 #[cfg(feature = "io_uring")]
 pub struct IoUringDisk {
-    /// The underlying io_uring writer.
     writer: crate::engine::uring::IoUringWriter,
-    /// Highest token submitted (for barrier_all).
     highest_submitted: Option<WriteToken>,
 }
 
 #[cfg(feature = "io_uring")]
 impl IoUringDisk {
-    /// Create a new IoUringDisk wrapping an existing IoUringWriter.
     pub fn new(writer: crate::engine::uring::IoUringWriter) -> Self {
         Self {
             writer,
@@ -517,34 +354,28 @@ impl IoUringDisk {
         }
     }
 
-    /// Create a new IoUringDisk from a path.
     pub fn create(path: &std::path::Path, view_id: u64) -> io::Result<Self> {
         let writer = crate::engine::uring::IoUringWriter::create(path, view_id, None)?;
         Ok(Self::new(writer))
     }
 
-    /// Create a new IoUringDisk with O_DIRECT.
     pub fn create_direct(path: &std::path::Path, view_id: u64) -> io::Result<Self> {
         let writer = crate::engine::uring::IoUringWriter::create_direct(path, view_id, None)?;
         Ok(Self::new(writer))
     }
 
-    /// Get a reference to the underlying IoUringWriter.
     pub fn writer(&self) -> &crate::engine::uring::IoUringWriter {
         &self.writer
     }
 
-    /// Get a mutable reference to the underlying IoUringWriter.
     pub fn writer_mut(&mut self) -> &mut crate::engine::uring::IoUringWriter {
         &mut self.writer
     }
 
-    /// Consume self and return the underlying IoUringWriter.
     pub fn into_inner(self) -> crate::engine::uring::IoUringWriter {
         self.writer
     }
 
-    /// Check if using O_DIRECT mode.
     pub fn is_direct_io(&self) -> bool {
         self.writer.is_direct_io()
     }
@@ -574,7 +405,6 @@ impl VirtualDisk for IoUringDisk {
     }
 
     fn barrier(&mut self, up_to: WriteToken) -> Result<BarrierResult, FatalError> {
-        // Flush ensures all writes up to the highest pending are durable
         let durable_index = self.writer.flush().map_err(FatalError::IoError)?;
 
         if durable_index >= up_to.index() {
@@ -625,19 +455,14 @@ impl VirtualDisk for IoUringDisk {
     }
 
     fn write_offset(&self) -> u64 {
-        // IoUringWriter doesn't expose write_offset directly
-        // This is a limitation we need to address
-        0 // Placeholder - would need to add this to IoUringWriter
+        0 // TODO: expose from IoUringWriter
     }
 
     fn transfer_ownership(&mut self) {
-        // IoUringWriter doesn't have transfer_ownership
-        // This is a limitation we need to address
+        // TODO: add to IoUringWriter
     }
 
     fn truncate(&mut self, _len: u64) -> io::Result<()> {
-        // IoUringWriter doesn't have truncate
-        // This is a limitation we need to address
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "IoUringWriter does not support truncate",

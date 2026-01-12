@@ -12,37 +12,17 @@ use crate::engine::format::{
     GENESIS_HASH, HEADER_SIZE, MAX_PAYLOAD_SIZE, SENTINEL_SIZE,
 };
 
-/// State of the log writer.
-/// Per write_path.md: Single-writer law - only one thread may execute the write pipeline.
-///
-/// # Thread Safety
-///
-/// This struct enforces single-writer semantics at runtime via `owner_thread`.
-/// FORBIDDEN STATE F4: Two writers with same prev_hash would fork the chain.
+/// Single-writer log. Enforces F4 (no chain fork) via owner_thread.
 pub struct LogWriter {
-    /// File descriptor for the log file.
     file: File,
-    /// Current write offset in the file (speculative, may be ahead of durable).
     write_offset: u64,
-    /// Next sequence number to assign (speculative).
-    /// Per write_path.md: Next_Sequence_Number
     next_index: u64,
-    /// Hash accumulator for chain continuity.
-    /// Per write_path.md: Tail_Hash_Accumulator
     tail_hash: [u8; 16],
-    /// Current view ID for consensus.
     view_id: u64,
-    /// Atomic counter tracking the highest durable index.
-    /// Per write_path.md: Committed_Index
     committed_index: AtomicU64,
-    /// Thread ID of the writer that created this instance.
-    /// ENFORCES F4: Only one thread may write; panics if violated.
     owner_thread: ThreadId,
-    /// Counter for fdatasync calls (for testing group commit efficiency).
     fdatasync_count: AtomicU64,
-    /// Last write latency in milliseconds (for monitoring).
     last_write_latency_ms: AtomicU64,
-    /// Whether to verify writes (for testing).
     verify_writes: bool,
 }
 
@@ -63,28 +43,16 @@ impl LogWriter {
         let path_cstr = CString::new(path.as_os_str().as_bytes())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid path"))?;
         
-        // O_RDWR | O_CREAT | O_DSYNC
-        // O_DSYNC = 0x1000 on Linux (may vary, using libc constant)
         let flags = libc::O_RDWR | libc::O_CREAT | libc::O_DSYNC;
-        let mode = 0o644; // rw-r--r--
-        
-        // SAFETY: open() is a standard POSIX syscall.
-        // - path_cstr is a valid null-terminated C string
-        // - flags and mode are valid
+        let mode = 0o644;
         let fd = unsafe { libc::open(path_cstr.as_ptr(), flags, mode) };
         
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
         
-        // SAFETY: fd is a valid file descriptor from open()
         let file = unsafe { File::from_raw_fd(fd) };
-
-        // ENFORCES F4: Record owner thread to detect cross-thread access.
         let owner_thread = std::thread::current().id();
-        
-        // ENFORCES F3/F6: committed_index starts at next_index - 1 (last recovered entry).
-        // If next_index is 0, there are no committed entries yet.
         let committed_index = if next_index > 0 {
             AtomicU64::new(next_index - 1)
         } else {
@@ -105,29 +73,14 @@ impl LogWriter {
         })
     }
 
-    /// Create a new empty log file.
-    /// Used when starting fresh (no recovery needed).
     pub fn create(path: &Path, view_id: u64) -> io::Result<Self> {
         Self::open(path, 0, 0, GENESIS_HASH, view_id)
     }
     
-    /// Transfer ownership of this LogWriter to the current thread.
-    ///
-    /// This is used when moving a LogWriter to a dedicated worker thread.
-    /// After calling this, the LogWriter will only accept operations from
-    /// the new owner thread.
-    ///
-    /// # Safety
-    /// The caller must ensure that no other thread will attempt to use
-    /// this LogWriter after ownership is transferred. This is typically
-    /// done by moving the LogWriter into the new thread before calling
-    /// this method.
     pub fn transfer_ownership(&mut self) {
         self.owner_thread = std::thread::current().id();
     }
     
-    /// Verify this is being called from the owner thread.
-    /// ENFORCES F4: Panics if called from wrong thread.
     #[inline]
     fn assert_owner_thread(&self) {
         let current = std::thread::current().id();
@@ -140,29 +93,10 @@ impl LogWriter {
         }
     }
 
-    /// Append an entry to the log with a consensus timestamp.
-    /// Per write_path.md: Speculative Preparation -> Submission -> Durability Barrier -> Commit
-    ///
-    /// # Arguments
-    /// * `payload` - The entry payload
-    /// * `stream_id` - Routing hint for multi-tenancy
-    /// * `flags` - Entry type bitmask
-    /// * `timestamp_ns` - Consensus timestamp (nanoseconds since epoch), assigned by Primary
-    ///
-    /// # Returns
-    /// The index of the appended entry on success.
-    ///
-    /// # Panics
-    /// - Panics if payload exceeds MAX_PAYLOAD_SIZE (per invariants.md).
-    /// - Panics if called from wrong thread (FORBIDDEN STATE F4).
     pub fn append(&mut self, payload: &[u8], stream_id: u64, flags: u16, timestamp_ns: u64) -> io::Result<u64> {
-        // ENFORCES F4: Single-writer invariant.
         self.assert_owner_thread();
-        
-        // Start timing for latency measurement
         let start_time = std::time::Instant::now();
         
-        // Validate payload size per recovery.md
         if payload.len() > MAX_PAYLOAD_SIZE as usize {
             panic!(
                 "FATAL: Payload size {} exceeds maximum {}",
@@ -171,15 +105,8 @@ impl LogWriter {
             );
         }
 
-        // ENFORCES F5: Gapless monotonicity - index is assigned sequentially.
-        // ENFORCES F6: next_index is speculative; committed_index tracks durable state.
-        // === Step 1: Speculative Preparation (per write_path.md) ===
-        // Action A: Compute payload_hash (done in LogHeader::new)
-        // Action B: Read current Tail_Hash_Accumulator and Next_Sequence_Number
         let index = self.next_index;
         let prev_hash = self.tail_hash;
-
-        // Action C & D: Construct header with CRC
         let header = LogHeader::new(
             index,
             self.view_id,
@@ -191,19 +118,11 @@ impl LogWriter {
             1, // schema_version = 1 for now
         );
 
-        // === Step 2: Submission (per write_path.md) ===
-        // Syscall 1: pwritev(fd, iovec[], offset)
-        // OPTIMIZATION: Include sentinel in same pwritev call to avoid extra syscall
         let header_bytes = header.as_bytes();
         let padding_len = calculate_padding(payload.len() as u32);
         let padding = [0u8; 8]; // Max padding is 7 bytes
         let sentinel = create_sentinel(index);
 
-        // Build iovec for pwritev
-        // iovec[0]: Header
-        // iovec[1]: Payload
-        // iovec[2]: Padding (if needed)
-        // iovec[3]: Sentinel (batched with entry for single syscall)
         let mut iovecs = [
             libc::iovec {
                 iov_base: header_bytes.as_ptr() as *mut libc::c_void,
@@ -223,22 +142,14 @@ impl LogWriter {
             },
         ];
 
-        // Always include sentinel (iovec[3]), but padding (iovec[2]) only if needed
         let iovec_count = if padding_len > 0 { 4 } else { 3 };
-        
-        // If no padding, we need to skip iovec[2] - restructure iovecs
         let (iovecs_ptr, iovecs_len) = if padding_len > 0 {
             (iovecs.as_mut_ptr(), 4)
         } else {
-            // Skip padding iovec by moving sentinel to position 2
             iovecs[2] = iovecs[3];
             (iovecs.as_mut_ptr(), 3)
         };
 
-        // SAFETY: pwritev is a standard POSIX syscall.
-        // - fd is valid (from File)
-        // - iovecs point to valid memory
-        // - offset is within file bounds (we're appending)
         let bytes_written = unsafe {
             libc::pwritev(
                 self.file.as_raw_fd(),
@@ -263,63 +174,25 @@ impl LogWriter {
             ));
         }
 
-        // === Step 3: Durability Barrier (per write_path.md) ===
-        // With O_DSYNC, the pwritev syscall already ensures data is on stable storage
-        // before returning. We do NOT call fdatasync() here - that would be redundant.
-        // O_DSYNC provides the durability guarantee we need.
-        //
-        // NOTE: If O_DSYNC is not honored by the drive (lying hardware), fdatasync
-        // wouldn't help either - both rely on the drive's firmware being honest.
-        // The verify_write check (in debug builds) catches such lying drives.
-        
-        // Increment sync counter for testing/metrics (counts durable writes, not syscalls)
         self.fdatasync_count.fetch_add(1, Ordering::Relaxed);
 
-        // ============================================================
-        // COMMIT POINT: pwritev with O_DSYNC has returned success.
-        // The entry is now durable. This is the exact commit point.
-        // ============================================================
-
-        // === Step 3.5: Read-After-Write Verification (debug only) ===
-        // Detect stale reads / directed torn writes per failure_model.md II.A.4.
-        // This is expensive and only enabled in debug builds.
         if self.verify_writes {
             self.verify_write(self.write_offset, header_bytes, payload)?;
         }
 
-        // === Step 4: Commit Phase (per write_path.md) ===
-        // "This step executes IF AND ONLY IF fdatasync returns 0 (Success)"
-        // Action E: Update Global State
-        //
-        // ENFORCES F6: committed_index is updated AFTER fdatasync success.
-        // This ensures readers cannot observe an index that isn't durable.
-        //
-        // ENFORCES F3: committed_index uses Release ordering so readers
-        // with Acquire ordering see the durable state.
         self.committed_index.store(index, Ordering::Release);
-        
-        // Update speculative state (for next append)
-        // Note: write_offset does NOT include sentinel - sentinel is overwritten by next entry
         self.tail_hash = compute_chain_hash(&header, payload);
         self.next_index += 1;
         self.write_offset += frame_size(payload.len() as u32) as u64;
 
-        // Sentinel was already written as part of the pwritev call above (batched optimization)
-        // No separate write_sentinel() call needed
-
-        // Record write latency for metrics
         let latency_ms = start_time.elapsed().as_millis() as u64;
         self.last_write_latency_ms.store(latency_ms, Ordering::Relaxed);
 
         Ok(index)
     }
 
-    /// Write the end-of-log sentinel marker after the last entry.
-    /// This allows detection of silent truncation during recovery.
     fn write_sentinel(&self, last_index: u64) -> io::Result<()> {
         let sentinel = create_sentinel(last_index);
-        
-        // Write sentinel at current write_offset (after the last entry)
         let bytes_written = unsafe {
             libc::pwrite(
                 self.file.as_raw_fd(),
@@ -340,18 +213,11 @@ impl LogWriter {
             ));
         }
         
-        // With O_DSYNC, pwrite already ensures durability - no fdatasync needed.
-        // The sentinel is now durable on disk.
-        
         Ok(())
     }
 
-    /// Verify that what we wrote is what we read back.
-    /// Detects stale reads, directed torn writes, and lying drives.
     fn verify_write(&self, offset: u64, header_bytes: &[u8; HEADER_SIZE], payload: &[u8]) -> io::Result<()> {
         use crate::engine::format::compute_payload_hash;
-        
-        // Read back header
         let mut header_readback = [0u8; HEADER_SIZE];
         let bytes_read = unsafe {
             libc::pread(
@@ -373,7 +239,6 @@ impl LogWriter {
             );
         }
         
-        // Verify header bytes match exactly
         if header_readback != *header_bytes {
             panic!(
                 "FATAL: Read-after-write header mismatch at offset {}. Stale read or directed torn write detected.",
@@ -381,7 +246,6 @@ impl LogWriter {
             );
         }
         
-        // Read back payload
         let payload_offset = offset + HEADER_SIZE as u64;
         let mut payload_readback = vec![0u8; payload.len()];
         let payload_bytes_read = unsafe {

@@ -1,44 +1,15 @@
-//! CommitIndex: First-class type for durability visibility.
-//!
-//! This module defines a type-safe representation of the commit index,
-//! eliminating the ambiguity between "no commits" and "commit at index 0".
-//!
-//! # Design Rationale
-//!
-//! Previously, commit_index was represented as:
-//! - `Option<u64>` in some places (correct but verbose)
-//! - `u64` with sentinel `u64::MAX` in others (error-prone)
-//! - Raw `u64` with implicit "0 means nothing committed" (incorrect!)
-//!
-//! This type makes the semantics explicit and provides safe conversions.
-
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Sentinel value indicating no entries have been committed.
 const NO_COMMIT_SENTINEL: u64 = u64::MAX;
 
-/// A type-safe representation of the commit index.
-///
-/// This type distinguishes between:
-/// - `CommitIndex::None` - No entries have been committed yet
-/// - `CommitIndex::At(n)` - Entries up to and including index `n` are committed
-///
-/// # Invariants
-///
-/// - Once committed, an index is never uncommitted (monotonic)
-/// - Index 0 is a valid commit index (first entry)
-/// - Comparisons are well-defined: None < At(0) < At(1) < ...
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CommitIndex {
-    /// No entries have been committed yet.
     None,
-    /// Entries up to and including this index are committed.
     At(u64),
 }
 
 impl CommitIndex {
-    /// Create a CommitIndex from an Option<u64>.
     #[inline]
     pub fn from_option(opt: Option<u64>) -> Self {
         match opt {
@@ -47,7 +18,6 @@ impl CommitIndex {
         }
     }
 
-    /// Convert to Option<u64>.
     #[inline]
     pub fn to_option(self) -> Option<u64> {
         match self {
@@ -56,9 +26,6 @@ impl CommitIndex {
         }
     }
 
-    /// Convert to raw u64 using sentinel for None.
-    ///
-    /// This is for atomic storage compatibility.
     #[inline]
     pub fn to_raw(self) -> u64 {
         match self {
@@ -67,7 +34,6 @@ impl CommitIndex {
         }
     }
 
-    /// Create from raw u64 (sentinel = None).
     #[inline]
     pub fn from_raw(raw: u64) -> Self {
         if raw == NO_COMMIT_SENTINEL {
@@ -77,22 +43,16 @@ impl CommitIndex {
         }
     }
 
-    /// Check if any entries are committed.
     #[inline]
     pub fn is_some(&self) -> bool {
         matches!(self, CommitIndex::At(_))
     }
 
-    /// Check if no entries are committed.
     #[inline]
     pub fn is_none(&self) -> bool {
         matches!(self, CommitIndex::None)
     }
 
-    /// Get the index value, panicking if None.
-    ///
-    /// # Panics
-    /// Panics if this is `CommitIndex::None`.
     #[inline]
     pub fn unwrap(self) -> u64 {
         match self {
@@ -101,7 +61,6 @@ impl CommitIndex {
         }
     }
 
-    /// Get the index value or a default.
     #[inline]
     pub fn unwrap_or(self, default: u64) -> u64 {
         match self {
@@ -110,9 +69,6 @@ impl CommitIndex {
         }
     }
 
-    /// Check if this commit index includes the given log index.
-    ///
-    /// Returns true if `log_index` is committed (i.e., log_index <= commit_index).
     #[inline]
     pub fn includes(&self, log_index: u64) -> bool {
         match self {
@@ -121,9 +77,6 @@ impl CommitIndex {
         }
     }
 
-    /// Advance the commit index if the new value is greater.
-    ///
-    /// Returns true if the index was advanced.
     #[inline]
     pub fn advance(&mut self, new_index: u64) -> bool {
         match self {
@@ -178,43 +131,33 @@ impl From<CommitIndex> for Option<u64> {
     }
 }
 
-/// Atomic commit index for concurrent access.
-///
-/// This wraps an AtomicU64 with type-safe load/store operations.
 pub struct AtomicCommitIndex {
     inner: AtomicU64,
 }
 
 impl AtomicCommitIndex {
-    /// Create a new atomic commit index with no commits.
     pub const fn new() -> Self {
         AtomicCommitIndex {
             inner: AtomicU64::new(NO_COMMIT_SENTINEL),
         }
     }
 
-    /// Create from a known commit index.
     pub fn from_commit_index(ci: CommitIndex) -> Self {
         AtomicCommitIndex {
             inner: AtomicU64::new(ci.to_raw()),
         }
     }
 
-    /// Load with Acquire ordering.
     #[inline]
     pub fn load(&self) -> CommitIndex {
         CommitIndex::from_raw(self.inner.load(Ordering::Acquire))
     }
 
-    /// Store with Release ordering.
     #[inline]
     pub fn store(&self, ci: CommitIndex) {
         self.inner.store(ci.to_raw(), Ordering::Release);
     }
 
-    /// Advance if greater, with AcqRel ordering.
-    ///
-    /// Returns the previous value.
     pub fn advance_if_greater(&self, new_index: u64) -> CommitIndex {
         loop {
             let current_raw = self.inner.load(Ordering::Acquire);
