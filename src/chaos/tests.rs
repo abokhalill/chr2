@@ -18,7 +18,7 @@ use crate::chaos::network::{ChaosConfig, ChaosNetwork};
 use crate::engine::log::LogWriter;
 use crate::engine::reader::CommittedState;
 use crate::kernel::bank::{BankApp, BankEvent};
-use crate::vsr::client::chrClient;
+use crate::vsr::client::ChrClient;
 use crate::vsr::message::{ClientRequest, ClientResult};
 use crate::vsr::node::{NodeRole, VsrNode, ELECTION_TIMEOUT};
 
@@ -71,7 +71,10 @@ impl ChaosNode {
             last_sent: now,
             session_map: crate::vsr::client::SessionMap::new(),
             pending_requests: HashMap::new(),
-            quorum_tracker: Some(crate::vsr::quorum::QuorumTracker::new(cluster_size, node_id)),
+            quorum_tracker: Some(crate::vsr::quorum::QuorumTracker::new(
+                cluster_size,
+                node_id,
+            )),
             start_view_change_votes: HashMap::new(),
             do_view_change_msgs: HashMap::new(),
             sent_do_view_change: false,
@@ -117,7 +120,7 @@ impl ChaosNode {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as u64;
-        
+
         let index = self.writer.append(payload, 0, 0, timestamp_ns)?;
 
         if let Some(ref mut tracker) = self.quorum_tracker {
@@ -139,7 +142,10 @@ impl ChaosNode {
         Ok(index)
     }
 
-    fn handle_client_request(&mut self, request: &ClientRequest) -> crate::vsr::message::ClientResponse {
+    fn handle_client_request(
+        &mut self,
+        request: &ClientRequest,
+    ) -> crate::vsr::message::ClientResponse {
         use crate::vsr::message::{ClientResponse, ClientResult};
 
         if self.role != NodeRole::Primary {
@@ -155,13 +161,17 @@ impl ChaosNode {
             };
         }
 
-        if let Some(cached) = self.session_map.check_duplicate(request.client_id, request.sequence_number) {
+        if let Some(cached) = self
+            .session_map
+            .check_duplicate(request.client_id, request.sequence_number)
+        {
             return cached;
         }
 
         match self.submit(&request.payload) {
             Ok(log_index) => {
-                self.pending_requests.insert(log_index, (request.client_id, request.sequence_number));
+                self.pending_requests
+                    .insert(log_index, (request.client_id, request.sequence_number));
                 ClientResponse {
                     sequence_number: request.sequence_number,
                     result: ClientResult::Pending,
@@ -174,7 +184,8 @@ impl ChaosNode {
                         message: format!("Failed to append: {}", e),
                     },
                 };
-                self.session_map.record_response(request.client_id, response.clone());
+                self.session_map
+                    .record_response(request.client_id, response.clone());
                 response
             }
         }
@@ -202,7 +213,8 @@ impl ChaosNode {
                     sequence_number,
                     result: ClientResult::Success { log_index },
                 };
-                self.session_map.record_response(client_id, response.clone());
+                self.session_map
+                    .record_response(client_id, response.clone());
                 responses.push((client_id, response));
             }
         }
@@ -215,10 +227,16 @@ impl ChaosNode {
 
         if let Some((from_node, msg)) = self.endpoint.try_recv() {
             match msg {
-                VsrMessage::Prepare { view, index, payload, commit_index, timestamp_ns } => {
+                VsrMessage::Prepare {
+                    view,
+                    index,
+                    payload,
+                    commit_index,
+                    timestamp_ns,
+                } => {
                     if self.role == NodeRole::Backup && view == self.view {
                         self.last_primary_contact = Instant::now();
-                        
+
                         // Append to log with consensus timestamp from Primary
                         if let Ok(_) = self.writer.append(&payload, 0, 0, timestamp_ns) {
                             // Send PrepareOk
@@ -238,12 +256,19 @@ impl ChaosNode {
                         }
                     }
                 }
-                VsrMessage::PrepareBatch { view, entries, commit_index, timestamp_ns, .. } => {
+                VsrMessage::PrepareBatch {
+                    view,
+                    entries,
+                    commit_index,
+                    timestamp_ns,
+                    ..
+                } => {
                     if self.role == NodeRole::Backup && view == self.view {
                         self.last_primary_contact = Instant::now();
-                        
+
                         // Append batch to log with consensus timestamp from Primary
-                        let payloads: Vec<Vec<u8>> = entries.iter().map(|e| e.payload.clone()).collect();
+                        let payloads: Vec<Vec<u8>> =
+                            entries.iter().map(|e| e.payload.clone()).collect();
                         if let Ok(last_index) = self.writer.append_batch(&payloads, timestamp_ns) {
                             // Send PrepareOk for each entry
                             for entry in &entries {
@@ -271,7 +296,8 @@ impl ChaosNode {
                             if reached {
                                 let committable = tracker.committable_index();
                                 if let Some(new_commit) = committable {
-                                    let current = self.committed_state.committed_index().unwrap_or(0);
+                                    let current =
+                                        self.committed_state.committed_index().unwrap_or(0);
                                     if new_commit > current {
                                         self.committed_state.advance(new_commit);
                                     }
@@ -292,10 +318,29 @@ impl ChaosNode {
                 VsrMessage::StartViewChange { new_view, node_id } => {
                     self.handle_start_view_change(new_view, node_id);
                 }
-                VsrMessage::DoViewChange { new_view, node_id, commit_index, last_log_index, last_log_hash, log_suffix } => {
-                    self.handle_do_view_change(new_view, node_id, commit_index, last_log_index, last_log_hash, log_suffix);
+                VsrMessage::DoViewChange {
+                    new_view,
+                    node_id,
+                    commit_index,
+                    last_log_index,
+                    last_log_hash,
+                    log_suffix,
+                } => {
+                    self.handle_do_view_change(
+                        new_view,
+                        node_id,
+                        commit_index,
+                        last_log_index,
+                        last_log_hash,
+                        log_suffix,
+                    );
                 }
-                VsrMessage::StartView { new_view, primary_id, commit_index, .. } => {
+                VsrMessage::StartView {
+                    new_view,
+                    primary_id,
+                    commit_index,
+                    ..
+                } => {
                     self.handle_start_view(new_view, primary_id, commit_index);
                 }
                 VsrMessage::CatchUpRequest { .. } | VsrMessage::CatchUpResponse { .. } => {
@@ -338,9 +383,7 @@ impl ChaosNode {
                     false
                 }
             }
-            NodeRole::ViewChangeInProgress => {
-                false
-            }
+            NodeRole::ViewChangeInProgress => false,
         }
     }
 
@@ -365,7 +408,10 @@ impl ChaosNode {
             return;
         }
 
-        let votes = self.start_view_change_votes.entry(new_view).or_insert_with(HashSet::new);
+        let votes = self
+            .start_view_change_votes
+            .entry(new_view)
+            .or_insert_with(HashSet::new);
         votes.insert(from_node);
 
         if self.role == NodeRole::ViewChangeInProgress && self.proposed_view == new_view {
@@ -388,7 +434,10 @@ impl ChaosNode {
             self.proposed_view = new_view;
 
             let my_info = self.create_do_view_change_info();
-            let msgs = self.do_view_change_msgs.entry(new_view).or_insert_with(Vec::new);
+            let msgs = self
+                .do_view_change_msgs
+                .entry(new_view)
+                .or_insert_with(Vec::new);
             if !msgs.iter().any(|m| m.node_id == self.node_id) {
                 msgs.push(my_info);
             }
@@ -462,7 +511,10 @@ impl ChaosNode {
             log_suffix,
         };
 
-        let msgs = self.do_view_change_msgs.entry(new_view).or_insert_with(Vec::new);
+        let msgs = self
+            .do_view_change_msgs
+            .entry(new_view)
+            .or_insert_with(Vec::new);
         if !msgs.iter().any(|m| m.node_id == from_node) {
             msgs.push(info);
         }
@@ -492,7 +544,10 @@ impl ChaosNode {
         self.view = new_view;
         self.proposed_view = new_view;
         self.role = NodeRole::Primary;
-        self.quorum_tracker = Some(crate::vsr::quorum::QuorumTracker::new(self.cluster_size, self.node_id));
+        self.quorum_tracker = Some(crate::vsr::quorum::QuorumTracker::new(
+            self.cluster_size,
+            self.node_id,
+        ));
         self.last_sent = Instant::now();
 
         let current_committed = self.committed_state.committed_index().unwrap_or(0);
@@ -582,11 +637,14 @@ fn test_chr_chaos_monkey() {
     }
 
     // Create chaos network with 5% drop rate
-    let network = ChaosNetwork::new(CLUSTER_SIZE, ChaosConfig {
-        drop_rate: 0.05,
-        latency_range: (Duration::ZERO, Duration::ZERO), // No latency for single-threaded test
-        enabled: true,
-    });
+    let network = ChaosNetwork::new(
+        CLUSTER_SIZE,
+        ChaosConfig {
+            drop_rate: 0.05,
+            latency_range: (Duration::ZERO, Duration::ZERO), // No latency for single-threaded test
+            enabled: true,
+        },
+    );
 
     // Create shared history
     let history = SharedHistory::new();
@@ -623,8 +681,8 @@ fn test_chr_chaos_monkey() {
     }
 
     // Create clients
-    let mut clients: Vec<chrClient> = (0..NUM_CLIENTS)
-        .map(|id| chrClient::new(id as u64, (0..CLUSTER_SIZE).collect()))
+    let mut clients: Vec<ChrClient> = (0..NUM_CLIENTS)
+        .map(|id| ChrClient::new(id as u64, (0..CLUSTER_SIZE).collect()))
         .collect();
 
     let mut rng = rand::thread_rng();
@@ -677,7 +735,10 @@ fn test_chr_chaos_monkey() {
                                 history.record(
                                     client_id as u64,
                                     seq,
-                                    Operation::Deposit { user: user.clone(), amount },
+                                    Operation::Deposit {
+                                        user: user.clone(),
+                                        amount,
+                                    },
                                     OperationResult::Success { balance: None },
                                     Some(0),
                                 );
@@ -738,8 +799,10 @@ fn test_chr_chaos_monkey() {
         if let Some(&prev_idx) = seen.get(&key) {
             if matches!(entry.result, OperationResult::Success { .. }) {
                 duplicates += 1;
-                eprintln!("Duplicate: client={}, seq={} at {} and {}", 
-                    entry.client_id, entry.sequence_number, prev_idx, idx);
+                eprintln!(
+                    "Duplicate: client={}, seq={} at {} and {}",
+                    entry.client_id, entry.sequence_number, prev_idx, idx
+                );
             }
         } else {
             seen.insert(key, idx);
@@ -787,7 +850,13 @@ fn test_chaos_network_message_delivery() {
 
     let (from, msg) = received.unwrap();
     assert_eq!(from, 0);
-    assert!(matches!(msg, crate::vsr::message::VsrMessage::Commit { commit_index: 42, .. }));
+    assert!(matches!(
+        msg,
+        crate::vsr::message::VsrMessage::Commit {
+            commit_index: 42,
+            ..
+        }
+    ));
 }
 
 /// Test: test_chr_jepsen_threaded
@@ -800,7 +869,7 @@ fn test_chaos_network_message_delivery() {
 /// - Total state audit at the end
 #[test]
 fn test_chr_jepsen_threaded() {
-    use crate::chaos::runner::{spawn_node, NodeConfig, ClusterManager};
+    use crate::chaos::runner::{spawn_node, ClusterManager, NodeConfig};
     use std::path::PathBuf;
 
     const CLUSTER_SIZE: u32 = 3;
@@ -818,11 +887,14 @@ fn test_chr_jepsen_threaded() {
     }
 
     // Create chaos network with moderate packet loss
-    let network = ChaosNetwork::new(CLUSTER_SIZE, ChaosConfig {
-        drop_rate: 0.05,
-        latency_range: (Duration::from_millis(1), Duration::from_millis(10)),
-        enabled: true,
-    });
+    let network = ChaosNetwork::new(
+        CLUSTER_SIZE,
+        ChaosConfig {
+            drop_rate: 0.05,
+            latency_range: (Duration::from_millis(1), Duration::from_millis(10)),
+            enabled: true,
+        },
+    );
 
     // Create endpoints before spawning threads
     let endpoints: Vec<_> = (0..CLUSTER_SIZE)
@@ -865,7 +937,7 @@ fn test_chr_jepsen_threaded() {
             let stop = stop_clients.clone();
 
             thread::spawn(move || {
-                let mut client = chrClient::new(client_id as u64, (0..CLUSTER_SIZE).collect());
+                let mut client = ChrClient::new(client_id as u64, (0..CLUSTER_SIZE).collect());
                 let mut rng = rand::thread_rng();
                 let mut successful = 0u64;
 
@@ -887,7 +959,7 @@ fn test_chr_jepsen_threaded() {
 
                     while retries < max_retries && !stop.load(Ordering::SeqCst) {
                         let target = client.target_node() as usize;
-                        
+
                         let (resp_tx, resp_rx) = crossbeam_channel::bounded(1);
                         let cmd = crate::chaos::runner::NodeCommand::ClientRequest(
                             request.clone(),
@@ -911,11 +983,14 @@ fn test_chr_jepsen_threaded() {
                                         // Wait a bit for commit
                                         thread::sleep(Duration::from_millis(50));
                                         successful += 1;
-                                        
+
                                         history.record(
                                             client_id as u64,
                                             seq,
-                                            Operation::Deposit { user: user.clone(), amount },
+                                            Operation::Deposit {
+                                                user: user.clone(),
+                                                amount,
+                                            },
                                             OperationResult::Success { balance: None },
                                             None,
                                         );
@@ -926,7 +1001,10 @@ fn test_chr_jepsen_threaded() {
                                         history.record(
                                             client_id as u64,
                                             seq,
-                                            Operation::Deposit { user: user.clone(), amount },
+                                            Operation::Deposit {
+                                                user: user.clone(),
+                                                amount,
+                                            },
                                             OperationResult::Success { balance: None },
                                             None,
                                         );
@@ -946,7 +1024,7 @@ fn test_chr_jepsen_threaded() {
                     }
 
                     total_operations.fetch_add(1, Ordering::SeqCst);
-                    
+
                     // Small delay between operations
                     thread::sleep(Duration::from_millis(10));
                 }
@@ -968,9 +1046,9 @@ fn test_chr_jepsen_threaded() {
             eprintln!("[NEMESIS] Partitioning node 0 from cluster");
             network.partition(0, 1);
             network.partition(0, 2);
-            
+
             thread::sleep(Duration::from_millis(500));
-            
+
             eprintln!("[NEMESIS] Healing partition");
             network.heal_all();
         }
@@ -997,8 +1075,14 @@ fn test_chr_jepsen_threaded() {
     let states = cluster.get_all_states();
 
     eprintln!("\n=== Jepsen Threaded Test Results ===");
-    eprintln!("Total operations: {}", total_operations.load(Ordering::SeqCst));
-    eprintln!("Successful operations: {}", total_successful.load(Ordering::SeqCst));
+    eprintln!(
+        "Total operations: {}",
+        total_operations.load(Ordering::SeqCst)
+    );
+    eprintln!(
+        "Successful operations: {}",
+        total_successful.load(Ordering::SeqCst)
+    );
     eprintln!("Nodes synchronized: {}", synced);
 
     for state in &states {
@@ -1013,7 +1097,7 @@ fn test_chr_jepsen_threaded() {
         let committed_indices: Vec<_> = states.iter().map(|s| s.committed_index).collect();
         let first = committed_indices[0];
         let all_same = committed_indices.iter().all(|&idx| idx == first);
-        
+
         if !all_same {
             eprintln!("WARNING: Committed indices differ: {:?}", committed_indices);
         }
@@ -1032,8 +1116,10 @@ fn test_chr_jepsen_threaded() {
         if let Some(&prev_idx) = seen.get(&key) {
             if matches!(entry.result, OperationResult::Success { .. }) {
                 duplicates += 1;
-                eprintln!("Duplicate: client={}, seq={} at {} and {}", 
-                    entry.client_id, entry.sequence_number, prev_idx, idx);
+                eprintln!(
+                    "Duplicate: client={}, seq={} at {} and {}",
+                    entry.client_id, entry.sequence_number, prev_idx, idx
+                );
             }
         } else {
             seen.insert(key, idx);
@@ -1046,7 +1132,10 @@ fn test_chr_jepsen_threaded() {
     }
 
     // Assertions
-    assert!(total_successful.load(Ordering::SeqCst) > 0, "No successful operations!");
+    assert!(
+        total_successful.load(Ordering::SeqCst) > 0,
+        "No successful operations!"
+    );
     assert_eq!(duplicates, 0, "Found {} duplicate executions!", duplicates);
 
     eprintln!("=== Jepsen Threaded Test PASSED ===\n");
@@ -1061,7 +1150,7 @@ fn test_chr_jepsen_threaded() {
 /// - Verify consistency across all nodes
 #[test]
 fn test_chr_jepsen_kill_revive() {
-    use crate::chaos::runner::{spawn_node, NodeConfig, ClusterManager};
+    use crate::chaos::runner::{spawn_node, ClusterManager, NodeConfig};
     use std::path::PathBuf;
 
     const CLUSTER_SIZE: u32 = 3;
@@ -1078,11 +1167,14 @@ fn test_chr_jepsen_kill_revive() {
     }
 
     // Create chaos network
-    let network = ChaosNetwork::new(CLUSTER_SIZE, ChaosConfig {
-        drop_rate: 0.02,
-        latency_range: (Duration::from_millis(1), Duration::from_millis(5)),
-        enabled: true,
-    });
+    let network = ChaosNetwork::new(
+        CLUSTER_SIZE,
+        ChaosConfig {
+            drop_rate: 0.02,
+            latency_range: (Duration::from_millis(1), Duration::from_millis(5)),
+            enabled: true,
+        },
+    );
 
     // Create endpoints
     let endpoints: Vec<_> = (0..CLUSTER_SIZE)
@@ -1119,7 +1211,7 @@ fn test_chr_jepsen_kill_revive() {
     let stop = stop_clients.clone();
 
     let client_handle = thread::spawn(move || {
-        let mut client = chrClient::new(1, (0..CLUSTER_SIZE).collect());
+        let mut client = ChrClient::new(1, (0..CLUSTER_SIZE).collect());
         let mut rng = rand::thread_rng();
         let mut successful = 0u64;
 
@@ -1137,12 +1229,10 @@ fn test_chr_jepsen_kill_revive() {
             let mut retries = 0;
             while retries < 10 && !stop.load(Ordering::SeqCst) {
                 let target = client.target_node() as usize;
-                
+
                 let (resp_tx, resp_rx) = crossbeam_channel::bounded(1);
-                let cmd = crate::chaos::runner::NodeCommand::ClientRequest(
-                    request.clone(),
-                    resp_tx,
-                );
+                let cmd =
+                    crate::chaos::runner::NodeCommand::ClientRequest(request.clone(), resp_tx);
 
                 if nodes[target].send(cmd).is_err() {
                     retries += 1;
@@ -1151,21 +1241,19 @@ fn test_chr_jepsen_kill_revive() {
                 }
 
                 match resp_rx.recv_timeout(Duration::from_secs(1)) {
-                    Ok(response) => {
-                        match &response.result {
-                            ClientResult::NotThePrimary { leader_hint } => {
-                                client.handle_redirect(*leader_hint);
-                                retries += 1;
-                            }
-                            ClientResult::Pending | ClientResult::Success { .. } => {
-                                successful += 1;
-                                break;
-                            }
-                            ClientResult::Error { .. } => {
-                                retries += 1;
-                            }
+                    Ok(response) => match &response.result {
+                        ClientResult::NotThePrimary { leader_hint } => {
+                            client.handle_redirect(*leader_hint);
+                            retries += 1;
                         }
-                    }
+                        ClientResult::Pending | ClientResult::Success { .. } => {
+                            successful += 1;
+                            break;
+                        }
+                        ClientResult::Error { .. } => {
+                            retries += 1;
+                        }
+                    },
                     Err(_) => {
                         retries += 1;
                     }
@@ -1230,7 +1318,10 @@ fn test_chr_jepsen_kill_revive() {
     let consistency = cluster.verify_consistency();
 
     eprintln!("\n=== Kill/Revive Test Results ===");
-    eprintln!("Successful operations: {}", total_successful.load(Ordering::SeqCst));
+    eprintln!(
+        "Successful operations: {}",
+        total_successful.load(Ordering::SeqCst)
+    );
     eprintln!("Nodes synchronized: {}", synced);
     eprintln!("Consistency check: {:?}", consistency);
 
@@ -1250,7 +1341,10 @@ fn test_chr_jepsen_kill_revive() {
     }
 
     // Assertions
-    assert!(total_successful.load(Ordering::SeqCst) > 0, "No successful operations!");
+    assert!(
+        total_successful.load(Ordering::SeqCst) > 0,
+        "No successful operations!"
+    );
     // Note: consistency may not be achieved if view change didn't complete
     // This is acceptable for a chaos test - we're testing that the system doesn't crash
 

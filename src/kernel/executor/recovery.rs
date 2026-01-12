@@ -133,7 +133,9 @@ impl<A: ChrApplication> Executor<A> {
         Ok(executor)
     }
 
-    pub(super) fn find_latest_valid_snapshot(snapshot_dir: &Path) -> Result<Option<SnapshotManifest>, FatalError> {
+    pub(super) fn find_latest_valid_snapshot(
+        snapshot_dir: &Path,
+    ) -> Result<Option<SnapshotManifest>, FatalError> {
         use std::fs;
 
         if !snapshot_dir.exists() {
@@ -181,14 +183,17 @@ impl<A: ChrApplication> Executor<A> {
         Ok(None)
     }
 
-    pub(super) fn get_entry_prev_hash(reader: &mut LogReader, index: u64) -> Result<[u8; 16], FatalError> {
+    pub(super) fn get_entry_prev_hash(
+        reader: &mut LogReader,
+        index: u64,
+    ) -> Result<[u8; 16], FatalError> {
         let entry = reader.read(index).map_err(|e| {
             FatalError::ReadError(format!(
                 "Failed to read entry at index {} to get prev_hash: {}",
                 index, e
             ))
         })?;
-        
+
         Ok(entry.prev_hash)
     }
 }

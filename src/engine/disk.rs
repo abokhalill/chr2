@@ -27,9 +27,16 @@ pub struct BarrierResult {
 
 #[derive(Debug, Clone)]
 pub enum DiskCompletion {
-    WriteComplete { token: WriteToken },
-    BarrierComplete { result: BarrierResult },
-    Error { token: Option<WriteToken>, error: String },
+    WriteComplete {
+        token: WriteToken,
+    },
+    BarrierComplete {
+        result: BarrierResult,
+    },
+    Error {
+        token: Option<WriteToken>,
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +84,7 @@ pub trait VirtualDisk: Send {
 }
 
 /// O_DSYNC wrapper. Each pwritev is implicitly a barrier.
+#[allow(dead_code)]
 pub struct SyncDisk {
     writer: crate::engine::log::LogWriter,
     highest_submitted: Option<WriteToken>,
@@ -128,10 +136,7 @@ impl VirtualDisk for SyncDisk {
 
     fn submit_write_batch(&mut self, entries: &[LogEntry]) -> io::Result<WriteToken> {
         if entries.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Empty batch",
-            ));
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Empty batch"));
         }
 
         // Convert to the format expected by LogWriter
@@ -142,16 +147,15 @@ impl VirtualDisk for SyncDisk {
 
         let timestamp_ns = entries.first().map(|e| e.timestamp_ns).unwrap_or(0);
 
-        let last_index = self.writer
+        let last_index = self
+            .writer
             .append_batch_with_metadata(&entries_with_meta, timestamp_ns)
             .map_err(|e| match e {
                 FatalError::IoError(io_err) => io_err,
-                FatalError::PayloadTooLarge { size, max } => {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        format!("Payload size {} exceeds max {}", size, max),
-                    )
-                }
+                FatalError::PayloadTooLarge { size, max } => io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Payload size {} exceeds max {}", size, max),
+                ),
                 _ => io::Error::new(io::ErrorKind::Other, format!("{:?}", e)),
             })?;
 
@@ -194,7 +198,10 @@ impl VirtualDisk for SyncDisk {
                 } else {
                     Err(FatalError::IoError(io::Error::new(
                         io::ErrorKind::Other,
-                        format!("Barrier requested for {} but no entries committed", up_to.index()),
+                        format!(
+                            "Barrier requested for {} but no entries committed",
+                            up_to.index()
+                        ),
                     )))
                 }
             }
@@ -253,8 +260,8 @@ impl VirtualDisk for SyncDisk {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
     use std::fs;
+    use std::path::Path;
 
     #[test]
     fn test_sync_disk_single_write() {
@@ -384,7 +391,9 @@ impl IoUringDisk {
 #[cfg(feature = "io_uring")]
 impl VirtualDisk for IoUringDisk {
     fn submit_write(&mut self, entry: LogEntry) -> io::Result<WriteToken> {
-        let index = self.writer.submit_write(&entry.payload, entry.timestamp_ns)?;
+        let index = self
+            .writer
+            .submit_write(&entry.payload, entry.timestamp_ns)?;
         let token = WriteToken::from_index(index);
         self.highest_submitted = Some(token);
         Ok(token)
@@ -410,9 +419,8 @@ impl VirtualDisk for IoUringDisk {
         if durable_index >= up_to.index() {
             Ok(BarrierResult {
                 durable_index,
-                entries_synced: durable_index.saturating_sub(
-                    self.writer.committed_index().unwrap_or(0)
-                ),
+                entries_synced: durable_index
+                    .saturating_sub(self.writer.committed_index().unwrap_or(0)),
             })
         } else {
             Err(FatalError::IoError(io::Error::new(
@@ -473,8 +481,8 @@ impl VirtualDisk for IoUringDisk {
 #[cfg(all(test, feature = "io_uring"))]
 mod io_uring_tests {
     use super::*;
-    use std::path::Path;
     use std::fs;
+    use std::path::Path;
 
     #[test]
     fn test_io_uring_disk_single_write() {

@@ -70,9 +70,19 @@ impl<A: ChrApplication> Executor<A> {
         }
     }
 
-    pub fn state(&self) -> &A::State { &self.state }
-    pub fn next_index(&self) -> u64 { self.next_index }
-    pub fn status(&self) -> ExecutorStatus { self.status }
-    pub fn is_halted(&self) -> bool { self.status == ExecutorStatus::Halted }
-    pub fn query(&self, request: A::QueryRequest) -> A::QueryResponse { self.app.query(&self.state, request) }
+    pub fn state(&self) -> &A::State {
+        &self.state
+    }
+    pub fn next_index(&self) -> u64 {
+        self.next_index
+    }
+    pub fn status(&self) -> ExecutorStatus {
+        self.status
+    }
+    pub fn is_halted(&self) -> bool {
+        self.status == ExecutorStatus::Halted
+    }
+    pub fn query(&self, request: A::QueryRequest) -> A::QueryResponse {
+        self.app.query(&self.state, request)
+    }
 }

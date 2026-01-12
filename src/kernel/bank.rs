@@ -4,8 +4,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::kernel::traits::{
-    ApplyContext, ChrApplication, EffectId, Event, Outbox, SideEffect, 
-    SnapshotStream,
+    ApplyContext, ChrApplication, EffectId, Event, Outbox, SideEffect, SnapshotStream,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -21,23 +20,46 @@ struct BankSnapshotData {
 }
 
 impl BankState {
-    pub fn balance(&self, user: &str) -> u64 { self.balances.get(user).copied().unwrap_or(0) }
-    pub fn outbox(&self) -> &Outbox { &self.outbox }
-    pub fn outbox_mut(&mut self) -> &mut Outbox { &mut self.outbox }
+    pub fn balance(&self, user: &str) -> u64 {
+        self.balances.get(user).copied().unwrap_or(0)
+    }
+    pub fn outbox(&self) -> &Outbox {
+        &self.outbox
+    }
+    pub fn outbox_mut(&mut self) -> &mut Outbox {
+        &mut self.outbox
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum BankEvent {
-    Deposit { user: String, amount: u64 },
-    Withdraw { user: String, amount: u64 },
-    SendEmail { to: String, subject: String, client_id: u64, sequence_number: u64 },
-    SystemAcknowledgeEffect { effect_id: EffectId },
+    Deposit {
+        user: String,
+        amount: u64,
+    },
+    Withdraw {
+        user: String,
+        amount: u64,
+    },
+    SendEmail {
+        to: String,
+        subject: String,
+        client_id: u64,
+        sequence_number: u64,
+    },
+    SystemAcknowledgeEffect {
+        effect_id: EffectId,
+    },
     PoisonPill,
 }
 
 #[derive(Clone, Debug)]
 pub enum BankError {
-    InsufficientFunds { user: String, requested: u64, available: u64 },
+    InsufficientFunds {
+        user: String,
+        requested: u64,
+        available: u64,
+    },
     DeserializeError(String),
     SnapshotError(String),
 }
@@ -121,7 +143,9 @@ impl ChrApplication for BankApp {
                 let current_balance = state.balance(&user);
                 if current_balance < amount {
                     return Err(BankError::InsufficientFunds {
-                        user, requested: amount, available: current_balance,
+                        user,
+                        requested: amount,
+                        available: current_balance,
                     });
                 }
                 let mut new_state = state.clone();
@@ -133,18 +157,25 @@ impl ChrApplication for BankApp {
                 }];
                 Ok((new_state, side_effects))
             }
-            
-            BankEvent::SendEmail { to, subject, client_id, sequence_number } => {
+
+            BankEvent::SendEmail {
+                to,
+                subject,
+                client_id,
+                sequence_number,
+            } => {
                 let mut new_state = state.clone();
                 let effect_id = EffectId::new(client_id, sequence_number, 0);
                 let effect = SideEffect::Emit {
                     channel: "email".to_string(),
                     payload: format!("To: {}\nSubject: {}", to, subject).into_bytes(),
                 };
-                new_state.outbox.add_pending(effect_id, effect.clone(), ctx.event_index());
+                new_state
+                    .outbox
+                    .add_pending(effect_id, effect.clone(), ctx.event_index());
                 Ok((new_state, vec![effect]))
             }
-            
+
             BankEvent::SystemAcknowledgeEffect { effect_id } => {
                 let mut new_state = state.clone();
                 let _ = new_state.outbox.acknowledge(&effect_id);
@@ -181,14 +212,23 @@ impl ChrApplication for BankApp {
             1 => {
                 let balances: HashMap<String, u64> = bincode::deserialize(&stream.data)
                     .map_err(|e| BankError::SnapshotError(e.to_string()))?;
-                Ok(BankState { balances, outbox: Outbox::new() })
+                Ok(BankState {
+                    balances,
+                    outbox: Outbox::new(),
+                })
             }
             2 => {
                 let snapshot_data: BankSnapshotData = bincode::deserialize(&stream.data)
                     .map_err(|e| BankError::SnapshotError(e.to_string()))?;
-                Ok(BankState { balances: snapshot_data.balances, outbox: snapshot_data.outbox })
+                Ok(BankState {
+                    balances: snapshot_data.balances,
+                    outbox: snapshot_data.outbox,
+                })
             }
-            _ => Err(BankError::SnapshotError(format!("Unknown schema version: {}", stream.schema_version))),
+            _ => Err(BankError::SnapshotError(format!(
+                "Unknown schema version: {}",
+                stream.schema_version
+            ))),
         }
     }
 
@@ -308,7 +348,12 @@ mod tests {
         let mut state = app.genesis();
         state.balances.insert("Alice".to_string(), 100);
 
-        let response = app.query(&state, BankQuery::Balance { user: "Alice".to_string() });
+        let response = app.query(
+            &state,
+            BankQuery::Balance {
+                user: "Alice".to_string(),
+            },
+        );
         assert!(matches!(response, BankQueryResponse::Balance(100)));
     }
 }

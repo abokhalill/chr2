@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -31,6 +33,7 @@ impl Default for ChaosConfig {
 }
 
 /// A chaos-enabled network endpoint for a single node.
+#[allow(dead_code)]
 pub struct ChaosEndpoint {
     /// This node's ID.
     pub node_id: u32,
@@ -198,7 +201,12 @@ impl ChaosNetwork {
 
         // Spawn chaos processor thread
         let processor_handle = thread::spawn(move || {
-            Self::chaos_processor_shared(chaos_rx, node_senders_clone, config_clone, partition_map_clone);
+            Self::chaos_processor_shared(
+                chaos_rx,
+                node_senders_clone,
+                config_clone,
+                partition_map_clone,
+            );
         });
 
         ChaosNetwork {

@@ -31,7 +31,7 @@ pub enum VsrMessage {
         /// Used for deterministic block_time in application logic.
         timestamp_ns: u64,
     },
-    
+
     /// PrepareBatch message sent by Primary to Backups for group commit.
     ///
     /// Contains multiple log entries to be replicated atomically.
@@ -119,7 +119,7 @@ pub enum VsrMessage {
         /// Log entries that backups may be missing.
         log_entries: Vec<LogEntrySummary>,
     },
-    
+
     /// CatchUpRequest sent by Backup to Primary when it detects a log gap.
     ///
     /// The backup requests entries from `from_index` to `to_index` (inclusive).
@@ -134,7 +134,7 @@ pub enum VsrMessage {
         /// Last missing index (inclusive).
         to_index: u64,
     },
-    
+
     /// CatchUpResponse sent by Primary to Backup with missing entries.
     ///
     /// Contains the requested log entries for the backup to replay.
@@ -231,7 +231,11 @@ impl VsrMessage {
     pub fn index(&self) -> Option<u64> {
         match self {
             VsrMessage::Prepare { index, .. } => Some(*index),
-            VsrMessage::PrepareBatch { start_index, entries, .. } => {
+            VsrMessage::PrepareBatch {
+                start_index,
+                entries,
+                ..
+            } => {
                 // Return the last index in the batch
                 if entries.is_empty() {
                     Some(*start_index)
@@ -245,9 +249,7 @@ impl VsrMessage {
             VsrMessage::DoViewChange { .. } => None,
             VsrMessage::StartView { .. } => None,
             VsrMessage::CatchUpRequest { to_index, .. } => Some(*to_index),
-            VsrMessage::CatchUpResponse { entries, .. } => {
-                entries.last().map(|e| e.index)
-            }
+            VsrMessage::CatchUpResponse { entries, .. } => entries.last().map(|e| e.index),
         }
     }
 }

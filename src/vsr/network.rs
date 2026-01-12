@@ -73,6 +73,7 @@ impl NetworkEndpoint {
 }
 
 /// Mock network that connects multiple nodes via channels.
+#[allow(dead_code)]
 pub struct MockNetwork {
     /// Number of nodes in the network.
     cluster_size: u32,
@@ -199,7 +200,9 @@ mod tests {
         assert!(ep0.send_to(1, msg.clone()));
 
         // Node 1 receives
-        let (from, received) = ep1.recv_timeout(std::time::Duration::from_millis(100)).unwrap();
+        let (from, received) = ep1
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .unwrap();
         assert_eq!(from, 0);
         assert!(matches!(received, VsrMessage::Prepare { index: 0, .. }));
     }
@@ -231,7 +234,9 @@ mod tests {
         // Now should work
         assert!(ep0.send_to(2, msg));
 
-        let (from, _) = ep2.recv_timeout(std::time::Duration::from_millis(100)).unwrap();
+        let (from, _) = ep2
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .unwrap();
         assert_eq!(from, 0);
     }
 }

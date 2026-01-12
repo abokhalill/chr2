@@ -245,7 +245,8 @@ impl Nemesis {
 
                 // Shuffle and take partition_count backups to partition
                 backups.shuffle(&mut rand::thread_rng());
-                let partitioned: Vec<u32> = backups.into_iter().take(partition_count as usize).collect();
+                let partitioned: Vec<u32> =
+                    backups.into_iter().take(partition_count as usize).collect();
 
                 for &backup in &partitioned {
                     network.partition(primary, backup);

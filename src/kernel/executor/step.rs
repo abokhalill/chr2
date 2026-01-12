@@ -1,7 +1,9 @@
 use std::panic::{self, AssertUnwindSafe};
 
 use crate::engine::reader::ReadError;
-use crate::kernel::traits::{ApplyContext, BlockTime, ChrApplication, Event, EventFlags, EventHeader};
+use crate::kernel::traits::{
+    ApplyContext, BlockTime, ChrApplication, Event, EventFlags, EventHeader,
+};
 
 use super::error::{ExecutorStatus, FatalError, StepResult};
 use super::Executor;
@@ -25,7 +27,10 @@ impl<A: ChrApplication> Executor<A> {
             Ok(entry) => entry,
             Err(ReadError::IndexNotCommitted { .. }) => return Ok(StepResult::Idle),
             Err(ReadError::TruncatedDuringRead { index }) => {
-                return Err(FatalError::ReadError(format!("Entry {} truncated during read", index)));
+                return Err(FatalError::ReadError(format!(
+                    "Entry {} truncated during read",
+                    index
+                )));
             }
             Err(e) => return Err(FatalError::ReadError(e.to_string())),
         };
@@ -43,7 +48,8 @@ impl<A: ChrApplication> Executor<A> {
         };
 
         let block_time = BlockTime::from_nanos(log_entry.timestamp_ns);
-        let random_seed = self.derive_random_seed_from_prev_hash(&log_entry.prev_hash, current_index);
+        let random_seed =
+            self.derive_random_seed_from_prev_hash(&log_entry.prev_hash, current_index);
 
         let ctx = ApplyContext::new(block_time, random_seed, current_index, log_entry.view_id);
 
@@ -55,11 +61,17 @@ impl<A: ChrApplication> Executor<A> {
             Ok(Ok((new_state, side_effects))) => {
                 self.state = new_state;
                 self.next_index += 1;
-                Ok(StepResult::Applied { index: current_index, side_effects })
+                Ok(StepResult::Applied {
+                    index: current_index,
+                    side_effects,
+                })
             }
             Ok(Err(app_error)) => {
                 self.next_index += 1;
-                Ok(StepResult::Rejected { index: current_index, error: app_error.to_string() })
+                Ok(StepResult::Rejected {
+                    index: current_index,
+                    error: app_error.to_string(),
+                })
             }
             Err(panic_info) => {
                 self.status = ExecutorStatus::Halted;
@@ -72,12 +84,19 @@ impl<A: ChrApplication> Executor<A> {
                     "<unknown panic>".to_string()
                 };
 
-                Err(FatalError::PoisonPill { index: current_index, message })
+                Err(FatalError::PoisonPill {
+                    index: current_index,
+                    message,
+                })
             }
         }
     }
 
-    pub(super) fn derive_random_seed_from_prev_hash(&self, prev_hash: &[u8; 16], index: u64) -> [u8; 32] {
+    pub(super) fn derive_random_seed_from_prev_hash(
+        &self,
+        prev_hash: &[u8; 16],
+        index: u64,
+    ) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
         hasher.update(prev_hash);
         hasher.update(&index.to_le_bytes());

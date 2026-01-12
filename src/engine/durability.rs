@@ -29,7 +29,9 @@ impl fmt::Display for DurabilityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DurabilityError::WorkerNotRunning => write!(f, "DurabilityWorker is not running"),
-            DurabilityError::ChannelDisconnected => write!(f, "DurabilityWorker channel disconnected"),
+            DurabilityError::ChannelDisconnected => {
+                write!(f, "DurabilityWorker channel disconnected")
+            }
             DurabilityError::WorkerPanicked => write!(f, "DurabilityWorker thread panicked"),
             DurabilityError::EmptyBatch => write!(f, "Cannot submit empty batch"),
         }
@@ -141,7 +143,7 @@ impl DurabilityHandle {
 
         let batch_id = self.next_batch_id.fetch_add(1, Ordering::SeqCst);
         let count = payloads.len() as u64;
-        
+
         // Reserve indices atomically
         let start_index = self.next_index.fetch_add(count, Ordering::SeqCst);
         let last_index = start_index + count - 1;
@@ -175,7 +177,7 @@ impl DurabilityHandle {
         }
 
         let batch_id = self.next_batch_id.fetch_add(1, Ordering::SeqCst);
-        
+
         // Reserve index atomically
         let index = self.next_index.fetch_add(1, Ordering::SeqCst);
 
@@ -300,7 +302,13 @@ impl DurabilityWorker {
         let thread_handle = thread::Builder::new()
             .name("durability-worker".to_string())
             .spawn(move || {
-                Self::disk_worker_loop(disk, request_rx, completion_tx, running_clone, stall_flag_clone);
+                Self::disk_worker_loop(
+                    disk,
+                    request_rx,
+                    completion_tx,
+                    running_clone,
+                    stall_flag_clone,
+                );
             })
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
@@ -322,7 +330,7 @@ impl DurabilityWorker {
     ) {
         // Transfer ownership of the disk to this thread.
         disk.transfer_ownership();
-        
+
         while running.load(Ordering::SeqCst) {
             match request_rx.recv() {
                 Ok(request) => {
@@ -333,12 +341,12 @@ impl DurabilityWorker {
                     }
 
                     let completion = Self::process_disk_request(disk.as_mut(), request);
-                    
+
                     // If shutdown, exit after processing
                     if completion.is_none() {
                         break;
                     }
-                    
+
                     if let Some(c) = completion {
                         // Send completion - if receiver is gone, just exit
                         if completion_tx.send(c).is_err() {
@@ -380,13 +388,13 @@ impl DurabilityWorker {
                         reserved_start_index, disk_next_index
                     );
                 }
-                
+
                 // Convert payloads to LogEntry format
                 let entries: Vec<LogEntry> = payloads
                     .into_iter()
                     .map(|p| LogEntry::new(p, timestamp_ns))
                     .collect();
-                
+
                 let result = match disk.submit_write_batch(&entries) {
                     Ok(token) => DurabilityResult::BatchSuccess {
                         start_index: reserved_start_index,
@@ -416,10 +424,12 @@ impl DurabilityWorker {
                         reserved_index, disk_next_index
                     );
                 }
-                
+
                 let entry = LogEntry::with_metadata(payload, stream_id, flags, timestamp_ns);
                 let result = match disk.submit_write(entry) {
-                    Ok(token) => DurabilityResult::AppendSuccess { index: token.index() },
+                    Ok(token) => DurabilityResult::AppendSuccess {
+                        index: token.index(),
+                    },
                     Err(e) => DurabilityResult::Error {
                         message: e.to_string(),
                     },
@@ -445,9 +455,7 @@ impl DurabilityWorker {
         match self.completion_rx.try_recv() {
             Ok(completion) => Ok(Some(completion)),
             Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Disconnected) => {
-                Err(DurabilityError::ChannelDisconnected)
-            }
+            Err(TryRecvError::Disconnected) => Err(DurabilityError::ChannelDisconnected),
         }
     }
 
@@ -476,13 +484,11 @@ impl DurabilityWorker {
     /// Shutdown the worker and wait for it to finish.
     pub fn shutdown_and_join(mut self) -> Result<(), DurabilityError> {
         self.handle.shutdown()?;
-        
+
         if let Some(handle) = self.thread_handle.take() {
-            handle
-                .join()
-                .map_err(|_| DurabilityError::WorkerPanicked)?;
+            handle.join().map_err(|_| DurabilityError::WorkerPanicked)?;
         }
-        
+
         Ok(())
     }
 
@@ -504,7 +510,7 @@ impl Drop for DurabilityWorker {
     fn drop(&mut self) {
         // Signal shutdown
         let _ = self.handle.shutdown();
-        
+
         // Wait for thread to finish
         if let Some(handle) = self.thread_handle.take() {
             let _ = handle.join();
@@ -522,32 +528,33 @@ mod tests {
     fn test_durability_worker_basic() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("test.log");
-        
+
         let worker = DurabilityWorker::create(&log_path, 0).unwrap();
         let handle = worker.handle();
-        
+
         // Submit a batch
         let payloads = vec![b"hello".to_vec(), b"world".to_vec()];
-        let (batch_id, start_idx, last_idx) = handle
-            .submit_batch(payloads, 12345)
-            .unwrap();
-        
+        let (batch_id, start_idx, last_idx) = handle.submit_batch(payloads, 12345).unwrap();
+
         assert_eq!(batch_id, 0);
         assert_eq!(start_idx, 0);
         assert_eq!(last_idx, 1);
-        
+
         // Wait for completion
         let completion = worker.recv_completion().unwrap();
         assert_eq!(completion.batch_id, 0);
-        
+
         match completion.result {
-            DurabilityResult::BatchSuccess { start_index, last_index } => {
+            DurabilityResult::BatchSuccess {
+                start_index,
+                last_index,
+            } => {
                 assert_eq!(start_index, 0);
                 assert_eq!(last_index, 1);
             }
             _ => panic!("Expected BatchSuccess"),
         }
-        
+
         // Shutdown
         worker.shutdown_and_join().unwrap();
     }
@@ -556,10 +563,10 @@ mod tests {
     fn test_durability_worker_single_append() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("test.log");
-        
+
         let worker = DurabilityWorker::create(&log_path, 0).unwrap();
         let handle = worker.handle();
-        
+
         // Submit single entries
         let (batch_id1, idx1) = handle
             .submit_single(b"entry1".to_vec(), 0, 0, 1000)
@@ -567,17 +574,17 @@ mod tests {
         let (batch_id2, idx2) = handle
             .submit_single(b"entry2".to_vec(), 0, 0, 2000)
             .unwrap();
-        
+
         assert_eq!(idx1, 0);
         assert_eq!(idx2, 1);
-        
+
         // Wait for completions
         let c1 = worker.recv_completion().unwrap();
         let c2 = worker.recv_completion().unwrap();
-        
+
         assert_eq!(c1.batch_id, batch_id1);
         assert_eq!(c2.batch_id, batch_id2);
-        
+
         worker.shutdown_and_join().unwrap();
     }
 
@@ -585,10 +592,10 @@ mod tests {
     fn test_durability_worker_multiple_batches() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("test.log");
-        
+
         let worker = DurabilityWorker::create(&log_path, 0).unwrap();
         let handle = worker.handle();
-        
+
         // Submit multiple batches
         let (_, start1, last1) = handle
             .submit_batch(vec![b"a".to_vec(), b"b".to_vec()], 1000)
@@ -596,17 +603,17 @@ mod tests {
         let (_, start2, last2) = handle
             .submit_batch(vec![b"c".to_vec(), b"d".to_vec(), b"e".to_vec()], 2000)
             .unwrap();
-        
+
         assert_eq!(start1, 0);
         assert_eq!(last1, 1);
         assert_eq!(start2, 2);
         assert_eq!(last2, 4);
-        
+
         // Drain completions
         std::thread::sleep(Duration::from_millis(50));
         let completions = worker.drain_completions();
         assert_eq!(completions.len(), 2);
-        
+
         worker.shutdown_and_join().unwrap();
     }
 
@@ -614,11 +621,11 @@ mod tests {
     fn test_durability_worker_handle_clone() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("test.log");
-        
+
         let worker = DurabilityWorker::create(&log_path, 0).unwrap();
         let handle1 = worker.handle();
         let handle2 = handle1.clone();
-        
+
         // Both handles should work
         let (_, idx1, _) = handle1
             .submit_batch(vec![b"from_handle1".to_vec()], 1000)
@@ -626,10 +633,10 @@ mod tests {
         let (_, idx2, _) = handle2
             .submit_batch(vec![b"from_handle2".to_vec()], 2000)
             .unwrap();
-        
+
         assert_eq!(idx1, 0);
         assert_eq!(idx2, 1);
-        
+
         worker.shutdown_and_join().unwrap();
     }
 
@@ -637,13 +644,13 @@ mod tests {
     fn test_durability_worker_shutdown_rejects_new_work() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("test.log");
-        
+
         let worker = DurabilityWorker::create(&log_path, 0).unwrap();
         let handle = worker.handle();
-        
+
         // Shutdown
         handle.shutdown().unwrap();
-        
+
         // New submissions should fail
         std::thread::sleep(Duration::from_millis(10));
         let result = handle.submit_batch(vec![b"should_fail".to_vec()], 1000);

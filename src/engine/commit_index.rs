@@ -162,16 +162,16 @@ impl AtomicCommitIndex {
         loop {
             let current_raw = self.inner.load(Ordering::Acquire);
             let current = CommitIndex::from_raw(current_raw);
-            
+
             let should_update = match current {
                 CommitIndex::None => true,
                 CommitIndex::At(idx) => new_index > idx,
             };
-            
+
             if !should_update {
                 return current;
             }
-            
+
             match self.inner.compare_exchange_weak(
                 current_raw,
                 new_index,
@@ -226,7 +226,7 @@ mod tests {
         assert!(ci.includes(0));
         assert!(ci.includes(5));
         assert!(!ci.includes(6));
-        
+
         let none = CommitIndex::None;
         assert!(!none.includes(0));
     }
@@ -236,10 +236,10 @@ mod tests {
         let mut ci = CommitIndex::None;
         assert!(ci.advance(0));
         assert_eq!(ci, CommitIndex::At(0));
-        
+
         assert!(ci.advance(5));
         assert_eq!(ci, CommitIndex::At(5));
-        
+
         assert!(!ci.advance(3)); // Can't go backwards
         assert_eq!(ci, CommitIndex::At(5));
     }
@@ -248,14 +248,14 @@ mod tests {
     fn test_atomic_commit_index() {
         let aci = AtomicCommitIndex::new();
         assert_eq!(aci.load(), CommitIndex::None);
-        
+
         aci.store(CommitIndex::At(10));
         assert_eq!(aci.load(), CommitIndex::At(10));
-        
+
         let prev = aci.advance_if_greater(15);
         assert_eq!(prev, CommitIndex::At(10));
         assert_eq!(aci.load(), CommitIndex::At(15));
-        
+
         let prev = aci.advance_if_greater(5); // Should not advance
         assert_eq!(prev, CommitIndex::At(15));
         assert_eq!(aci.load(), CommitIndex::At(15));
@@ -265,10 +265,10 @@ mod tests {
     fn test_from_option_conversions() {
         assert_eq!(CommitIndex::from(None), CommitIndex::None);
         assert_eq!(CommitIndex::from(Some(42)), CommitIndex::At(42));
-        
+
         let ci: Option<u64> = CommitIndex::At(42).into();
         assert_eq!(ci, Some(42));
-        
+
         let ci: Option<u64> = CommitIndex::None.into();
         assert_eq!(ci, None);
     }

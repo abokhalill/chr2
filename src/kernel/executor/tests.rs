@@ -88,7 +88,7 @@ fn test_bank_execution_flow() {
     // Step 0: Deposit("Alice", 100) → success
     let result = executor.step().unwrap();
     assert!(matches!(result, StepResult::Applied { index: 0, .. }));
-    
+
     // Check balance: should be 100
     let response = executor.query(BankQuery::Balance {
         user: "Alice".to_string(),
@@ -323,9 +323,12 @@ fn test_snapshot_isolation() {
     let recovery = LogRecovery::open(log_path).unwrap().unwrap();
     let outcome = recovery.scan().unwrap();
     let (next_index, write_offset, tail_hash) = match outcome {
-        RecoveryOutcome::Clean { last_index, next_offset, tail_hash, .. } => {
-            (last_index + 1, next_offset, tail_hash)
-        }
+        RecoveryOutcome::Clean {
+            last_index,
+            next_offset,
+            tail_hash,
+            ..
+        } => (last_index + 1, next_offset, tail_hash),
         _ => panic!("Expected clean recovery"),
     };
     let mut writer = LogWriter::open(
@@ -334,7 +337,8 @@ fn test_snapshot_isolation() {
         write_offset,
         tail_hash,
         1, // view_id
-    ).unwrap();
+    )
+    .unwrap();
     for i in 5..8u64 {
         let payload = serialize_event(&BankEvent::Deposit {
             user: format!("User{}", i),
@@ -598,7 +602,7 @@ fn test_corrupt_bridge_fails() {
     let result = Executor::recover(reader2, app2, snapshot_dir.clone());
 
     match result {
-        Err(FatalError::ChainBridgeMismatch { .. }) => {},
+        Err(FatalError::ChainBridgeMismatch { .. }) => {}
         Err(e) => panic!("Expected ChainBridgeMismatch, got {:?}", e),
         Ok(_) => panic!("Expected ChainBridgeMismatch error, but recovery succeeded"),
     }
@@ -668,7 +672,7 @@ fn test_log_gap_after_snapshot_fails() {
     let result = Executor::recover(reader2, app2, snapshot_dir.clone());
 
     match result {
-        Err(FatalError::LogBehindSnapshot { .. }) => {},
+        Err(FatalError::LogBehindSnapshot { .. }) => {}
         Err(e) => panic!("Expected LogBehindSnapshot, got {:?}", e),
         Ok(_) => panic!("Expected LogBehindSnapshot error, but recovery succeeded"),
     }
@@ -818,8 +822,8 @@ fn test_recovery_fallback_to_older_snapshot() {
 ///    - Restarting the Executor works perfectly (Hybrid Boot)
 #[test]
 fn test_physical_compaction_integrity() {
-    use crate::kernel::snapshot::SnapshotManifest;
     use crate::engine::recovery::{LogRecovery, RecoveryOutcome};
+    use crate::kernel::snapshot::SnapshotManifest;
 
     let log_path = Path::new("/tmp/chr_compaction_integrity.log");
     let snapshot_dir = PathBuf::from("/tmp/chr_compaction_integrity_snapshots");
@@ -870,39 +874,46 @@ fn test_physical_compaction_integrity() {
 
     // Step 3: Truncate log up to index 50 (keeping 51-99)
     LogWriter::truncate_prefix(
-        log_path,
-        51,        // new_base_index
+        log_path, 51,         // new_base_index
         cut_offset, // authoritative offset for index 51
         chain_hash, // chain_hash of entry 50
-    ).unwrap();
+    )
+    .unwrap();
 
     // Step 4: Verify file size is reduced
     let new_size = fs::metadata(log_path).unwrap().len();
     assert!(
         new_size < original_size,
         "File size should be reduced after truncation: {} < {}",
-        new_size, original_size
+        new_size,
+        original_size
     );
 
     // Step 5: Verify LogReader for index 51 succeeds
     let mut reader2 = LogReader::open(log_path, committed_state.clone()).unwrap();
-    
+
     // Verify base_index is now 51
     assert_eq!(reader2.base_index(), 51);
-    
+
     // Reading index 51 should succeed
     let entry51 = reader2.read(51).unwrap();
     assert_eq!(entry51.index, 51);
 
     // Step 6: Verify LogReader for index 49 returns IndexTruncated
     match reader2.read(49) {
-        Err(crate::engine::reader::ReadError::IndexTruncated { requested: 49, base_index: 51 }) => {},
+        Err(crate::engine::reader::ReadError::IndexTruncated {
+            requested: 49,
+            base_index: 51,
+        }) => {}
         other => panic!("Expected IndexTruncated for index 49, got {:?}", other),
     }
 
     // Also verify index 50 is truncated
     match reader2.read(50) {
-        Err(crate::engine::reader::ReadError::IndexTruncated { requested: 50, base_index: 51 }) => {},
+        Err(crate::engine::reader::ReadError::IndexTruncated {
+            requested: 50,
+            base_index: 51,
+        }) => {}
         other => panic!("Expected IndexTruncated for index 50, got {:?}", other),
     }
 
@@ -913,10 +924,18 @@ fn test_physical_compaction_integrity() {
     let outcome = recovery.scan().unwrap();
 
     match outcome {
-        RecoveryOutcome::Clean { last_index, base_index, base_prev_hash, .. } => {
+        RecoveryOutcome::Clean {
+            last_index,
+            base_index,
+            base_prev_hash,
+            ..
+        } => {
             assert_eq!(last_index, 99, "Last index should be 99");
             assert_eq!(base_index, 51, "Base index should be 51");
-            assert_eq!(base_prev_hash, chain_hash, "Base prev_hash should match snapshot chain_hash");
+            assert_eq!(
+                base_prev_hash, chain_hash,
+                "Base prev_hash should match snapshot chain_hash"
+            );
         }
         other => panic!("Expected Clean recovery, got {:?}", other),
     }

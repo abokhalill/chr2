@@ -39,16 +39,28 @@ impl fmt::Display for VsrError {
             VsrError::NotBackup => write!(f, "Operation requires Backup role"),
             VsrError::EmptyBatch => write!(f, "Cannot submit empty batch"),
             VsrError::ViewMismatch { expected, received } => {
-                write!(f, "View mismatch: expected {}, received {}", expected, received)
+                write!(
+                    f,
+                    "View mismatch: expected {}, received {}",
+                    expected, received
+                )
             }
             VsrError::IndexMismatch { expected, received } => {
-                write!(f, "Index mismatch: expected {}, received {}", expected, received)
+                write!(
+                    f,
+                    "Index mismatch: expected {}, received {}",
+                    expected, received
+                )
             }
             VsrError::LogAppendFailed(e) => write!(f, "Log append failed: {}", e),
             VsrError::DurabilityFailed(e) => write!(f, "Durability operation failed: {}", e),
             VsrError::LogReadFailed(msg) => write!(f, "Log read failed: {}", msg),
             VsrError::FencingViolation { view, fence } => {
-                write!(f, "Fencing violation: view {} rejected by fence {}", view, fence)
+                write!(
+                    f,
+                    "Fencing violation: view {} rejected by fence {}",
+                    view, fence
+                )
             }
             VsrError::InvalidCatchUpRange { from, to } => {
                 write!(f, "Invalid catch-up range: {} to {}", from, to)

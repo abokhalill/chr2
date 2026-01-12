@@ -347,9 +347,8 @@ impl Checker {
                     // Check if balance decreased
                     if balance < prev_balance {
                         // Check if there was a withdrawal between these observations
-                        let had_withdrawal = history.entries()[last_idx.unwrap()..=idx]
-                            .iter()
-                            .any(|e| {
+                        let had_withdrawal =
+                            history.entries()[last_idx.unwrap()..=idx].iter().any(|e| {
                                 matches!(
                                     (&e.operation, &e.result),
                                     (

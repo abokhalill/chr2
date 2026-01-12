@@ -381,9 +381,9 @@ mod tests {
         let hist = Histogram::new();
 
         // Record some values
-        hist.observe(5);   // bucket 0 (<=10)
-        hist.observe(25);  // bucket 1 (<=50)
-        hist.observe(75);  // bucket 2 (<=100)
+        hist.observe(5); // bucket 0 (<=10)
+        hist.observe(25); // bucket 1 (<=50)
+        hist.observe(75); // bucket 2 (<=100)
         hist.observe(250); // bucket 3 (<=500)
         hist.observe(750); // bucket 4 (<=1000)
 
@@ -404,16 +404,16 @@ mod tests {
 
         // Add 100 values, 10 in each of the first 10 buckets
         for _ in 0..10 {
-            hist.observe(5);     // bucket 0
-            hist.observe(25);    // bucket 1
-            hist.observe(75);    // bucket 2
-            hist.observe(250);   // bucket 3
-            hist.observe(750);   // bucket 4
-            hist.observe(2500);  // bucket 5
-            hist.observe(7500);  // bucket 6
+            hist.observe(5); // bucket 0
+            hist.observe(25); // bucket 1
+            hist.observe(75); // bucket 2
+            hist.observe(250); // bucket 3
+            hist.observe(750); // bucket 4
+            hist.observe(2500); // bucket 5
+            hist.observe(7500); // bucket 6
             hist.observe(25000); // bucket 7
             hist.observe(75000); // bucket 8
-            hist.observe(150000);// bucket 9
+            hist.observe(150000); // bucket 9
         }
 
         assert_eq!(hist.count(), 100);

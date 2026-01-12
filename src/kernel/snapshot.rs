@@ -36,14 +36,26 @@ impl std::fmt::Display for SnapshotError {
             SnapshotError::InvalidMagic => write!(f, "Invalid snapshot magic"),
             SnapshotError::UnsupportedVersion(v) => write!(f, "Unsupported version: {}", v),
             SnapshotError::HeaderChecksumMismatch { expected, actual } => {
-                write!(f, "Header checksum mismatch: expected {}, got {}", expected, actual)
+                write!(
+                    f,
+                    "Header checksum mismatch: expected {}, got {}",
+                    expected, actual
+                )
             }
             SnapshotError::StateChecksumMismatch { expected, actual } => {
-                write!(f, "State checksum mismatch: expected {}, got {}", expected, actual)
+                write!(
+                    f,
+                    "State checksum mismatch: expected {}, got {}",
+                    expected, actual
+                )
             }
             SnapshotError::FileTooSmall => write!(f, "File too small for snapshot header"),
             SnapshotError::StateSizeMismatch { expected, actual } => {
-                write!(f, "State size mismatch: expected {}, got {}", expected, actual)
+                write!(
+                    f,
+                    "State size mismatch: expected {}, got {}",
+                    expected, actual
+                )
             }
             SnapshotError::SerializeError(msg) => write!(f, "Serialize error: {}", msg),
         }
@@ -142,7 +154,8 @@ impl SnapshotManifest {
             return Err(SnapshotError::UnsupportedVersion(version));
         }
 
-        let stored_header_checksum = u32::from_le_bytes([header[52], header[53], header[54], header[55]]);
+        let stored_header_checksum =
+            u32::from_le_bytes([header[52], header[53], header[54], header[55]]);
         let computed_header_checksum = crc32c::crc32c(&header[0..52]);
         if stored_header_checksum != computed_header_checksum {
             return Err(SnapshotError::HeaderChecksumMismatch {
@@ -152,20 +165,21 @@ impl SnapshotManifest {
         }
 
         let last_included_index = u64::from_le_bytes([
-            header[8], header[9], header[10], header[11],
-            header[12], header[13], header[14], header[15],
+            header[8], header[9], header[10], header[11], header[12], header[13], header[14],
+            header[15],
         ]);
         let last_included_term = u64::from_le_bytes([
-            header[16], header[17], header[18], header[19],
-            header[20], header[21], header[22], header[23],
+            header[16], header[17], header[18], header[19], header[20], header[21], header[22],
+            header[23],
         ]);
         let mut chain_hash = [0u8; 16];
         chain_hash.copy_from_slice(&header[24..40]);
         let state_size = u64::from_le_bytes([
-            header[40], header[41], header[42], header[43],
-            header[44], header[45], header[46], header[47],
+            header[40], header[41], header[42], header[43], header[44], header[45], header[46],
+            header[47],
         ]);
-        let stored_state_checksum = u32::from_le_bytes([header[48], header[49], header[50], header[51]]);
+        let stored_state_checksum =
+            u32::from_le_bytes([header[48], header[49], header[50], header[51]]);
         let side_effects_dropped = header[56] != 0;
 
         let mut state = vec![0u8; state_size as usize];
@@ -200,8 +214,12 @@ impl SnapshotManifest {
     }
 
     pub fn index_from_filename(filename: &str) -> Option<u64> {
-        if !filename.starts_with("snapshot_") || !filename.ends_with(".snap") { return None; }
-        if filename.len() != 34 { return None; }
+        if !filename.starts_with("snapshot_") || !filename.ends_with(".snap") {
+            return None;
+        }
+        if filename.len() != 34 {
+            return None;
+        }
         filename[9..29].parse().ok()
     }
 }
@@ -239,7 +257,10 @@ mod tests {
 
         assert_eq!(loaded.last_included_index, 100);
         assert_eq!(loaded.last_included_term, 5);
-        assert_eq!(loaded.chain_hash, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(
+            loaded.chain_hash,
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
         assert_eq!(loaded.state, b"test state data");
         assert!(loaded.side_effects_dropped);
 
@@ -276,7 +297,10 @@ mod tests {
         fs::write(&path, &data).unwrap();
 
         let result = SnapshotManifest::load_from_file(&path);
-        assert!(matches!(result, Err(SnapshotError::HeaderChecksumMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(SnapshotError::HeaderChecksumMismatch { .. })
+        ));
 
         let _ = fs::remove_file(&path);
     }
@@ -295,7 +319,10 @@ mod tests {
         fs::write(&path, &data).unwrap();
 
         let result = SnapshotManifest::load_from_file(&path);
-        assert!(matches!(result, Err(SnapshotError::StateChecksumMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(SnapshotError::StateChecksumMismatch { .. })
+        ));
 
         let _ = fs::remove_file(&path);
     }
@@ -326,10 +353,7 @@ mod tests {
             SnapshotManifest::index_from_filename("snapshot_00000000000000012345.snap"),
             Some(12345)
         );
-        assert_eq!(
-            SnapshotManifest::index_from_filename("invalid.snap"),
-            None
-        );
+        assert_eq!(SnapshotManifest::index_from_filename("invalid.snap"), None);
         assert_eq!(
             SnapshotManifest::index_from_filename("snapshot_abc.snap"),
             None

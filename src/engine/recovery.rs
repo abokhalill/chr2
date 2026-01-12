@@ -75,7 +75,7 @@ impl LogRecovery {
             let mut meta_buf = [0u8; LOG_METADATA_SIZE];
             self.file.seek(SeekFrom::Start(0))?;
             let bytes_read = self.file.read(&mut meta_buf)?;
-            
+
             if bytes_read == LOG_METADATA_SIZE {
                 let metadata = LogMetadata::from_bytes(&meta_buf);
                 if metadata.verify_magic() && metadata.verify_checksum() {
@@ -84,7 +84,7 @@ impl LogRecovery {
                     hash_accumulator = metadata.base_prev_hash;
                     expected_index = metadata.base_index;
                     scan_offset = LOG_METADATA_SIZE as u64;
-                    
+
                     if self.file_size == LOG_METADATA_SIZE as u64 {
                         return Ok(RecoveryOutcome::CleanEmpty {
                             base_index,
@@ -123,8 +123,9 @@ impl LogRecovery {
             if bytes_read >= SENTINEL_SIZE && is_sentinel_magic(&header_buf[0..4]) {
                 let mut sentinel_buf = [0u8; SENTINEL_SIZE];
                 sentinel_buf.copy_from_slice(&header_buf[0..SENTINEL_SIZE]);
-                
-                if expected_index > base_index && verify_sentinel(&sentinel_buf, expected_index - 1) {
+
+                if expected_index > base_index && verify_sentinel(&sentinel_buf, expected_index - 1)
+                {
                     return Ok(RecoveryOutcome::Clean {
                         last_index: expected_index - 1,
                         next_offset: scan_offset,
@@ -184,7 +185,9 @@ impl LogRecovery {
                     highest_view,
                     base_index,
                     base_prev_hash,
-                    RecoverableError::HeaderCrcMismatch { offset: scan_offset },
+                    RecoverableError::HeaderCrcMismatch {
+                        offset: scan_offset,
+                    },
                 );
             }
 
@@ -364,7 +367,11 @@ impl LogRecovery {
             Ok(RecoveryOutcome::Truncated {
                 last_valid_index: base_index,
                 truncated_at: failure_offset,
-                new_offset: if base_index > 0 { LOG_METADATA_SIZE as u64 } else { 0 },
+                new_offset: if base_index > 0 {
+                    LOG_METADATA_SIZE as u64
+                } else {
+                    0
+                },
                 tail_hash: base_prev_hash,
                 highest_view: 0,
                 base_index,
@@ -419,10 +426,18 @@ impl LogRecovery {
 
     fn is_valid_header_candidate(&self, buf: &[u8; HEADER_SIZE], expected_min_index: u64) -> bool {
         let header = LogHeader::from_bytes(buf);
-        if !header.verify_checksum() { return false; }
-        if header.payload_size > MAX_PAYLOAD_SIZE { return false; }
-        if header.schema_version == 0 || header.schema_version > 100 { return false; }
-        if header.index < expected_min_index { return false; }
+        if !header.verify_checksum() {
+            return false;
+        }
+        if header.payload_size > MAX_PAYLOAD_SIZE {
+            return false;
+        }
+        if header.schema_version == 0 || header.schema_version > 100 {
+            return false;
+        }
+        if header.index < expected_min_index {
+            return false;
+        }
         true
     }
 
@@ -478,7 +493,9 @@ mod tests {
             let mut writer = LogWriter::create(path, 1).unwrap();
             for i in 0..5 {
                 let payload = format!("entry {}", i);
-                writer.append(payload.as_bytes(), 0, 0, 1_000_000_000 + i * 1_000_000_000).unwrap();
+                writer
+                    .append(payload.as_bytes(), 0, 0, 1_000_000_000 + i * 1_000_000_000)
+                    .unwrap();
             }
         }
 

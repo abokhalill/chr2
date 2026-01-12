@@ -20,7 +20,7 @@ fn main() {
         .with_target(true)
         .with_thread_ids(true)
         .init();
-    
+
     let args: Vec<String> = env::args().collect();
 
     if args.len() > 1 {
@@ -73,37 +73,35 @@ fn run_write_phase() {
 
     // First, recover to get current state
     let (next_index, write_offset, tail_hash, view_id) = match LogRecovery::open(path) {
-        Ok(Some(recovery)) => {
-            match recovery.scan() {
-                Ok(outcome) => match outcome {
-                    RecoveryOutcome::CleanEmpty { .. } => (0, 0, GENESIS_HASH, 1),
-                    RecoveryOutcome::Clean {
-                        last_index,
-                        next_offset,
-                        tail_hash,
-                        highest_view,
-                        ..
-                    } => (last_index + 1, next_offset, tail_hash, highest_view),
-                    RecoveryOutcome::Truncated {
-                        last_valid_index,
-                        new_offset,
-                        tail_hash,
-                        highest_view,
-                        ..
-                    } => {
-                        if last_valid_index == 0 && new_offset == 0 {
-                            (0, 0, GENESIS_HASH, 1)
-                        } else {
-                            (last_valid_index + 1, new_offset, tail_hash, highest_view)
-                        }
+        Ok(Some(recovery)) => match recovery.scan() {
+            Ok(outcome) => match outcome {
+                RecoveryOutcome::CleanEmpty { .. } => (0, 0, GENESIS_HASH, 1),
+                RecoveryOutcome::Clean {
+                    last_index,
+                    next_offset,
+                    tail_hash,
+                    highest_view,
+                    ..
+                } => (last_index + 1, next_offset, tail_hash, highest_view),
+                RecoveryOutcome::Truncated {
+                    last_valid_index,
+                    new_offset,
+                    tail_hash,
+                    highest_view,
+                    ..
+                } => {
+                    if last_valid_index == 0 && new_offset == 0 {
+                        (0, 0, GENESIS_HASH, 1)
+                    } else {
+                        (last_valid_index + 1, new_offset, tail_hash, highest_view)
                     }
-                },
-                Err(e) => {
-                    eprintln!("FATAL: Recovery failed: {}", e);
-                    process::exit(1);
                 }
+            },
+            Err(e) => {
+                eprintln!("FATAL: Recovery failed: {}", e);
+                process::exit(1);
             }
-        }
+        },
         Ok(None) => (0, 0, GENESIS_HASH, 1),
         Err(e) => {
             eprintln!("FATAL: Failed to open log: {}", e);
@@ -133,7 +131,10 @@ fn run_write_phase() {
 
         // Simulate crash before write completes
         if i == crash_after {
-            println!("SIMULATING CRASH at entry {} (before fdatasync)", next_index + i);
+            println!(
+                "SIMULATING CRASH at entry {} (before fdatasync)",
+                next_index + i
+            );
             // Exit without completing the write - simulates crash before durability
             process::exit(0);
         }
@@ -168,7 +169,7 @@ fn get_crash_point(next_index: u64) -> u64 {
     let pid = std::process::id() as u64;
     let seed = next_index.wrapping_add(pid);
     let hash = seed.wrapping_mul(2654435761) % ENTRIES_PER_RUN;
-    
+
     // Crash roughly 40% of the time, at varying points
     if hash < ENTRIES_PER_RUN * 2 / 5 {
         // Crash at different points: early, middle, or late

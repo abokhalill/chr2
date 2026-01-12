@@ -24,18 +24,18 @@ pub struct DurableState {
     /// Highest view number ever observed.
     /// Used to reject stale messages from zombie leaders.
     pub highest_view: u64,
-    
+
     /// View number we voted in (0 = no vote).
     /// Once we vote in view V, we cannot vote for a different node in V.
     pub voted_for_view: u64,
-    
+
     /// Node ID we voted for (NO_VOTE_NODE = no vote).
     pub voted_for_node: u32,
-    
+
     /// Last log index at time of manifest write.
     /// Used for leader election tiebreaking.
     pub last_log_index: u64,
-    
+
     /// View of the last log entry.
     /// Used for leader election tiebreaking.
     pub last_log_view: u64,
@@ -58,43 +58,43 @@ impl DurableState {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Serialize to bytes.
     pub fn to_bytes(&self) -> [u8; MANIFEST_SIZE] {
         let mut bytes = [0u8; MANIFEST_SIZE];
-        
+
         // Magic (0..4)
         bytes[0..4].copy_from_slice(&MANIFEST_MAGIC);
-        
+
         // Version (4..8)
         bytes[4..8].copy_from_slice(&MANIFEST_VERSION.to_le_bytes());
-        
+
         // highest_view (8..16)
         bytes[8..16].copy_from_slice(&self.highest_view.to_le_bytes());
-        
+
         // voted_for_view (16..24)
         bytes[16..24].copy_from_slice(&self.voted_for_view.to_le_bytes());
-        
+
         // voted_for_node (24..28)
         bytes[24..28].copy_from_slice(&self.voted_for_node.to_le_bytes());
-        
+
         // reserved_align (28..32) - zeros
-        
+
         // last_log_index (32..40)
         bytes[32..40].copy_from_slice(&self.last_log_index.to_le_bytes());
-        
+
         // last_log_view (40..48)
         bytes[40..48].copy_from_slice(&self.last_log_view.to_le_bytes());
-        
+
         // Compute checksum of bytes [0..48]
         let checksum = crc32c::crc32c(&bytes[0..48]);
         bytes[48..52].copy_from_slice(&checksum.to_le_bytes());
-        
+
         // reserved (52..64) - zeros
-        
+
         bytes
     }
-    
+
     /// Deserialize from bytes.
     /// Returns None if magic/version/checksum validation fails.
     pub fn from_bytes(bytes: &[u8; MANIFEST_SIZE]) -> Option<Self> {
@@ -102,43 +102,39 @@ impl DurableState {
         if bytes[0..4] != MANIFEST_MAGIC {
             return None;
         }
-        
+
         // Verify version
         let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if version != MANIFEST_VERSION {
             return None;
         }
-        
+
         // Verify checksum
         let stored_checksum = u32::from_le_bytes([bytes[48], bytes[49], bytes[50], bytes[51]]);
         let computed_checksum = crc32c::crc32c(&bytes[0..48]);
         if stored_checksum != computed_checksum {
             return None;
         }
-        
+
         // Parse fields
         let highest_view = u64::from_le_bytes([
-            bytes[8], bytes[9], bytes[10], bytes[11],
-            bytes[12], bytes[13], bytes[14], bytes[15],
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
         ]);
-        
+
         let voted_for_view = u64::from_le_bytes([
-            bytes[16], bytes[17], bytes[18], bytes[19],
-            bytes[20], bytes[21], bytes[22], bytes[23],
+            bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
         ]);
-        
+
         let voted_for_node = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
-        
+
         let last_log_index = u64::from_le_bytes([
-            bytes[32], bytes[33], bytes[34], bytes[35],
-            bytes[36], bytes[37], bytes[38], bytes[39],
+            bytes[32], bytes[33], bytes[34], bytes[35], bytes[36], bytes[37], bytes[38], bytes[39],
         ]);
-        
+
         let last_log_view = u64::from_le_bytes([
-            bytes[40], bytes[41], bytes[42], bytes[43],
-            bytes[44], bytes[45], bytes[46], bytes[47],
+            bytes[40], bytes[41], bytes[42], bytes[43], bytes[44], bytes[45], bytes[46], bytes[47],
         ]);
-        
+
         Some(DurableState {
             highest_view,
             voted_for_view,
@@ -147,7 +143,7 @@ impl DurableState {
             last_log_view,
         })
     }
-    
+
     /// Check if we can accept a message from the given view.
     /// Returns Err with the reason if the message should be rejected.
     #[inline]
@@ -161,7 +157,7 @@ impl DurableState {
             Ok(())
         }
     }
-    
+
     /// Check if we can vote for a node in the given view.
     /// Returns Err if we've already voted for a different node in this view.
     #[inline]
@@ -183,16 +179,16 @@ impl DurableState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewFenceError {
     /// Message view is lower than our highest seen view.
-    StaleView {
-        msg_view: u64,
-        highest_view: u64,
-    },
+    StaleView { msg_view: u64, highest_view: u64 },
 }
 
 impl std::fmt::Display for ViewFenceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ViewFenceError::StaleView { msg_view, highest_view } => {
+            ViewFenceError::StaleView {
+                msg_view,
+                highest_view,
+            } => {
                 write!(
                     f,
                     "Stale view: message view {} < highest seen view {}",
@@ -219,7 +215,11 @@ pub enum VoteFenceError {
 impl std::fmt::Display for VoteFenceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            VoteFenceError::AlreadyVoted { view, voted_for, requested } => {
+            VoteFenceError::AlreadyVoted {
+                view,
+                voted_for,
+                requested,
+            } => {
                 write!(
                     f,
                     "Already voted in view {}: voted for node {}, cannot vote for node {}",
@@ -255,14 +255,14 @@ impl Manifest {
             let mut file = File::open(path)?;
             let mut bytes = [0u8; MANIFEST_SIZE];
             file.read_exact(&mut bytes)?;
-            
+
             let state = DurableState::from_bytes(&bytes).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Manifest file corrupted: invalid magic, version, or checksum",
                 )
             })?;
-            
+
             Ok(Manifest {
                 path: path.to_path_buf(),
                 state,
@@ -277,31 +277,31 @@ impl Manifest {
             Ok(manifest)
         }
     }
-    
+
     /// Get the current durable state.
     #[inline]
     pub fn state(&self) -> &DurableState {
         &self.state
     }
-    
+
     /// Get the highest view ever seen.
     #[inline]
     pub fn highest_view(&self) -> u64 {
         self.state.highest_view
     }
-    
+
     /// Check view fence for an incoming message.
     #[inline]
     pub fn check_view_fence(&self, msg_view: u64) -> Result<(), ViewFenceError> {
         self.state.check_view_fence(msg_view)
     }
-    
+
     /// Check vote fence for a view change vote.
     #[inline]
     pub fn check_vote_fence(&self, view: u64, candidate: u32) -> Result<(), VoteFenceError> {
         self.state.check_vote_fence(view, candidate)
     }
-    
+
     /// Update highest_view if the new view is higher.
     /// Persists atomically before returning.
     ///
@@ -310,7 +310,7 @@ impl Manifest {
         if new_view <= self.state.highest_view {
             return Ok(false);
         }
-        
+
         self.state.highest_view = new_view;
         // Clear vote when advancing to new view
         if new_view > self.state.voted_for_view {
@@ -320,7 +320,7 @@ impl Manifest {
         self.persist()?;
         Ok(true)
     }
-    
+
     /// Record a vote for a node in a view.
     /// Persists atomically before returning.
     ///
@@ -328,22 +328,22 @@ impl Manifest {
     /// Returns error if we've already voted for a different node in this view.
     pub fn record_vote(&mut self, view: u64, node_id: u32) -> io::Result<()> {
         // Check fence first
-        self.state.check_vote_fence(view, node_id).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidInput, e.to_string())
-        })?;
-        
+        self.state
+            .check_vote_fence(view, node_id)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
+
         // Update state
         self.state.voted_for_view = view;
         self.state.voted_for_node = node_id;
-        
+
         // Also advance highest_view if needed
         if view > self.state.highest_view {
             self.state.highest_view = view;
         }
-        
+
         self.persist()
     }
-    
+
     /// Update log position tracking.
     /// Should be called after log writes to keep manifest in sync.
     pub fn update_log_position(&mut self, last_index: u64, last_view: u64) -> io::Result<()> {
@@ -351,13 +351,13 @@ impl Manifest {
         self.state.last_log_view = last_view;
         self.persist()
     }
-    
+
     /// Persist the current state atomically.
     ///
     /// Uses write-tmp-fsync-rename-fsync-dir pattern for crash safety.
     fn persist(&self) -> io::Result<()> {
         let tmp_path = self.path.with_extension("chr.tmp");
-        
+
         // Step 1: Write to temporary file
         {
             let mut tmp_file = OpenOptions::new()
@@ -365,10 +365,10 @@ impl Manifest {
                 .create(true)
                 .truncate(true)
                 .open(&tmp_path)?;
-            
+
             let bytes = self.state.to_bytes();
             tmp_file.write_all(&bytes)?;
-            
+
             // Step 2: fdatasync the temporary file
             // SAFETY: fdatasync is a standard POSIX syscall
             let result = unsafe { libc::fdatasync(tmp_file.as_raw_fd()) };
@@ -376,10 +376,10 @@ impl Manifest {
                 return Err(io::Error::last_os_error());
             }
         }
-        
+
         // Step 3: Atomic rename
         fs::rename(&tmp_path, &self.path)?;
-        
+
         // Step 4: fsync the directory
         if let Some(parent) = self.path.parent() {
             if let Ok(dir) = File::open(parent) {
@@ -387,7 +387,7 @@ impl Manifest {
                 unsafe { libc::fsync(dir.as_raw_fd()) };
             }
         }
-        
+
         Ok(())
     }
 }
@@ -418,7 +418,7 @@ pub fn validate_manifest_against_log(
             manifest.highest_view, log_highest_view
         ));
     }
-    
+
     // Check 2: If manifest has log position, verify it's not impossibly ahead
     // (This is a sanity check - manifest.last_log_index should be <= actual log length)
     if manifest.last_log_index > log_last_index + 1 {
@@ -429,7 +429,7 @@ pub fn validate_manifest_against_log(
             manifest.last_log_index, log_last_index
         ));
     }
-    
+
     Ok(())
 }
 
@@ -464,26 +464,23 @@ impl Manifest {
     ) -> io::Result<RecoveryWithManifest> {
         let was_created = !path.exists();
         let mut manifest = Self::open(path)?;
-        
+
         // Validate manifest against log state
-        validate_manifest_against_log(
-            manifest.state(),
-            log_highest_view,
-            log_last_index,
-        ).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        
+        validate_manifest_against_log(manifest.state(), log_highest_view, log_last_index)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
         // If log has a higher view than manifest (shouldn't happen normally,
         // but could if manifest write failed), update manifest
         if log_highest_view > manifest.highest_view() {
             manifest.advance_view(log_highest_view)?;
         }
-        
+
         // Update log position in manifest
         let log_view = manifest.state().last_log_view.max(log_highest_view);
         manifest.update_log_position(log_last_index, log_view)?;
-        
+
         let highest_view = manifest.highest_view();
-        
+
         Ok(RecoveryWithManifest {
             manifest,
             was_created,
@@ -496,7 +493,7 @@ impl Manifest {
 mod tests {
     use super::*;
     use std::fs;
-    
+
     #[test]
     fn test_durable_state_roundtrip() {
         let state = DurableState {
@@ -506,47 +503,47 @@ mod tests {
             last_log_index: 1000,
             last_log_view: 41,
         };
-        
+
         let bytes = state.to_bytes();
         let recovered = DurableState::from_bytes(&bytes).unwrap();
-        
+
         assert_eq!(state, recovered);
     }
-    
+
     #[test]
     fn test_durable_state_invalid_magic() {
         let mut bytes = [0u8; MANIFEST_SIZE];
         bytes[0..4].copy_from_slice(b"XXXX"); // Wrong magic
-        
+
         assert!(DurableState::from_bytes(&bytes).is_none());
     }
-    
+
     #[test]
     fn test_durable_state_invalid_checksum() {
         let state = DurableState::new();
         let mut bytes = state.to_bytes();
         bytes[48] ^= 0xFF; // Corrupt checksum
-        
+
         assert!(DurableState::from_bytes(&bytes).is_none());
     }
-    
+
     #[test]
     fn test_view_fence_check() {
         let state = DurableState {
             highest_view: 10,
             ..Default::default()
         };
-        
+
         // Should accept view >= highest_view
         assert!(state.check_view_fence(10).is_ok());
         assert!(state.check_view_fence(11).is_ok());
         assert!(state.check_view_fence(100).is_ok());
-        
+
         // Should reject view < highest_view
         assert!(state.check_view_fence(9).is_err());
         assert!(state.check_view_fence(0).is_err());
     }
-    
+
     #[test]
     fn test_vote_fence_check() {
         let state = DurableState {
@@ -555,52 +552,52 @@ mod tests {
             voted_for_node: 1,
             ..Default::default()
         };
-        
+
         // Should accept same vote
         assert!(state.check_vote_fence(10, 1).is_ok());
-        
+
         // Should reject different node in same view
         assert!(state.check_vote_fence(10, 2).is_err());
-        
+
         // Should accept vote in different view
         assert!(state.check_vote_fence(11, 2).is_ok());
         assert!(state.check_vote_fence(9, 2).is_ok());
     }
-    
+
     #[test]
     fn test_manifest_create_and_load() {
         let path = Path::new("/tmp/chr_manifest_test.chr");
         let _ = fs::remove_file(path);
-        
+
         // Create new manifest
         {
             let mut manifest = Manifest::open(path).unwrap();
             assert_eq!(manifest.highest_view(), 0);
-            
+
             manifest.advance_view(5).unwrap();
             assert_eq!(manifest.highest_view(), 5);
         }
-        
+
         // Reload and verify persistence
         {
             let manifest = Manifest::open(path).unwrap();
             assert_eq!(manifest.highest_view(), 5);
         }
-        
+
         let _ = fs::remove_file(path);
     }
-    
+
     #[test]
     fn test_manifest_vote_persistence() {
         let path = Path::new("/tmp/chr_manifest_vote_test.chr");
         let _ = fs::remove_file(path);
-        
+
         // Create and vote
         {
             let mut manifest = Manifest::open(path).unwrap();
             manifest.record_vote(10, 2).unwrap();
         }
-        
+
         // Reload and verify
         {
             let manifest = Manifest::open(path).unwrap();
@@ -609,30 +606,30 @@ mod tests {
             assert_eq!(state.voted_for_node, 2);
             assert_eq!(state.highest_view, 10);
         }
-        
+
         let _ = fs::remove_file(path);
     }
-    
+
     #[test]
     fn test_manifest_rejects_double_vote() {
         let path = Path::new("/tmp/chr_manifest_double_vote.chr");
         let _ = fs::remove_file(path);
-        
+
         let mut manifest = Manifest::open(path).unwrap();
-        
+
         // First vote succeeds
         manifest.record_vote(10, 1).unwrap();
-        
+
         // Same vote succeeds (idempotent)
         manifest.record_vote(10, 1).unwrap();
-        
+
         // Different node in same view fails
         let result = manifest.record_vote(10, 2);
         assert!(result.is_err());
-        
+
         // Vote in new view succeeds
         manifest.record_vote(11, 2).unwrap();
-        
+
         let _ = fs::remove_file(path);
     }
 }

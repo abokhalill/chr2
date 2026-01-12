@@ -3,8 +3,8 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::engine::format::{
-    calculate_padding, compute_chain_hash, frame_size,
-    LogHeader, GENESIS_HASH, HEADER_SIZE, MAX_PAYLOAD_SIZE,
+    calculate_padding, compute_chain_hash, frame_size, LogHeader, GENESIS_HASH, HEADER_SIZE,
+    MAX_PAYLOAD_SIZE,
 };
 
 /// Fault injection modes for testing.
@@ -276,7 +276,7 @@ impl FaultingLogWriter {
 
         // REORDER: Write N+1 first, then N
         // This simulates drive reordering where N+1 persists before N
-        
+
         // Write entry N+1 at its correct offset
         self.file.seek(SeekFrom::Start(offset_n1))?;
         self.file.write_all(header_n1.as_bytes())?;
@@ -303,7 +303,11 @@ impl FaultingLogWriter {
 
     /// Simulate partial reordering: write N+1 but leave N as zeros.
     /// This is the dangerous case where power loss occurs after N+1 persists but before N.
-    pub fn append_orphaned_entry(&mut self, payload_n: &[u8], payload_n1: &[u8]) -> io::Result<u64> {
+    pub fn append_orphaned_entry(
+        &mut self,
+        payload_n: &[u8],
+        payload_n1: &[u8],
+    ) -> io::Result<u64> {
         // Calculate what entry N would look like
         let index_n = self.next_index;
         let header_n = LogHeader::new(
@@ -337,7 +341,7 @@ impl FaultingLogWriter {
         // Write zeros at entry N's location (simulates N not persisting)
         self.file.seek(SeekFrom::Start(offset_n))?;
         self.file.write_all(&vec![0u8; frame_size_n])?;
-        
+
         // Write entry N+1 at its correct offset
         self.file.seek(SeekFrom::Start(offset_n1))?;
         self.file.write_all(header_n1.as_bytes())?;
@@ -402,10 +406,14 @@ mod tests {
         {
             let mut writer = FaultingLogWriter::create(path, 1).unwrap();
             for i in 0..5 {
-                writer.append_valid(format!("entry {}", i).as_bytes()).unwrap();
+                writer
+                    .append_valid(format!("entry {}", i).as_bytes())
+                    .unwrap();
             }
             // Write partial entry (header only)
-            writer.append_faulted(b"partial entry", FaultMode::HeaderOnly).unwrap();
+            writer
+                .append_faulted(b"partial entry", FaultMode::HeaderOnly)
+                .unwrap();
         }
 
         // Recovery should truncate the partial entry
@@ -413,7 +421,9 @@ mod tests {
         let outcome = recovery.scan().unwrap();
 
         match outcome {
-            RecoveryOutcome::Truncated { last_valid_index, .. } => {
+            RecoveryOutcome::Truncated {
+                last_valid_index, ..
+            } => {
                 assert_eq!(last_valid_index, 4, "Should have 5 valid entries (0-4)");
             }
             RecoveryOutcome::Clean { last_index, .. } => {
@@ -439,7 +449,9 @@ mod tests {
             for i in 0..10 {
                 offsets.push(writer.write_offset());
                 // Use fixed 8-byte payload for no padding
-                writer.append_valid(format!("entry{:02}", i).as_bytes()).unwrap();
+                writer
+                    .append_valid(format!("entry{:02}", i).as_bytes())
+                    .unwrap();
             }
         }
 
@@ -466,7 +478,9 @@ mod tests {
             let mut writer = FaultingLogWriter::create(path, 1).unwrap();
             for i in 0..5 {
                 offsets.push(writer.write_offset());
-                writer.append_valid(format!("entry{:02}", i).as_bytes()).unwrap();
+                writer
+                    .append_valid(format!("entry{:02}", i).as_bytes())
+                    .unwrap();
             }
         }
 
@@ -474,17 +488,17 @@ mod tests {
         let entry_3_offset = offsets[3];
         let header_bytes = read_raw(path, entry_3_offset, HEADER_SIZE).unwrap();
         let mut header_arr: [u8; HEADER_SIZE] = header_bytes.try_into().unwrap();
-        
+
         // Corrupt prev_hash (bytes 32-48)
         header_arr[32] = 0xBA;
         header_arr[33] = 0xAD;
         header_arr[34] = 0xF0;
         header_arr[35] = 0x0D;
-        
+
         // Recalculate CRC for bytes [4..64]
         let new_crc = crc32c::crc32c(&header_arr[4..]);
         header_arr[0..4].copy_from_slice(&new_crc.to_le_bytes());
-        
+
         // Write back the corrupted header with valid CRC
         inject_corruption(path, entry_3_offset, &header_arr).unwrap();
 
@@ -493,7 +507,7 @@ mod tests {
         let result = std::panic::catch_unwind(|| {
             let _ = recovery.scan();
         });
-        
+
         assert!(result.is_err(), "Expected panic on broken chain");
         let _ = fs::remove_file(path);
     }
@@ -510,7 +524,9 @@ mod tests {
             let mut writer = FaultingLogWriter::create(path, 1).unwrap();
             for i in 0..10 {
                 offsets.push(writer.write_offset());
-                writer.append_valid(format!("entry{:02}", i).as_bytes()).unwrap();
+                writer
+                    .append_valid(format!("entry{:02}", i).as_bytes())
+                    .unwrap();
             }
         }
 
@@ -536,7 +552,9 @@ mod tests {
             let mut writer = FaultingLogWriter::create(path, 1).unwrap();
             for i in 0..5 {
                 offsets.push(writer.write_offset());
-                writer.append_valid(format!("entry{:02}", i).as_bytes()).unwrap();
+                writer
+                    .append_valid(format!("entry{:02}", i).as_bytes())
+                    .unwrap();
             }
         }
 
@@ -549,7 +567,9 @@ mod tests {
         let outcome = recovery.scan().unwrap();
 
         match outcome {
-            RecoveryOutcome::Truncated { last_valid_index, .. } => {
+            RecoveryOutcome::Truncated {
+                last_valid_index, ..
+            } => {
                 assert_eq!(last_valid_index, 3, "Should truncate to entry 3");
             }
             _ => panic!("Expected Truncated, got {:?}", outcome),
@@ -569,10 +589,14 @@ mod tests {
         {
             let mut writer = FaultingLogWriter::create(path, 1).unwrap();
             for i in 0..3 {
-                writer.append_valid(format!("entry{:02}", i).as_bytes()).unwrap();
+                writer
+                    .append_valid(format!("entry{:02}", i).as_bytes())
+                    .unwrap();
             }
             // Now write a reordered pair (N+1 persists before N, but both end up on disk)
-            writer.append_reordered_pair(b"entry_n", b"entry_n1").unwrap();
+            writer
+                .append_reordered_pair(b"entry_n", b"entry_n1")
+                .unwrap();
         }
 
         // Recovery should succeed - both entries are valid
@@ -602,10 +626,14 @@ mod tests {
         {
             let mut writer = FaultingLogWriter::create(path, 1).unwrap();
             for i in 0..3 {
-                writer.append_valid(format!("entry{:02}", i).as_bytes()).unwrap();
+                writer
+                    .append_valid(format!("entry{:02}", i).as_bytes())
+                    .unwrap();
             }
             // Write orphaned entry: N is zeros, N+1 is valid
-            writer.append_orphaned_entry(b"entry_n", b"entry_n1").unwrap();
+            writer
+                .append_orphaned_entry(b"entry_n", b"entry_n1")
+                .unwrap();
         }
 
         // Recovery should panic with ZeroHole (zeros at N, valid data at N+1)

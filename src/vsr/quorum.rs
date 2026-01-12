@@ -5,10 +5,10 @@ use std::collections::HashMap;
 pub const MAX_CLUSTER_SIZE: u32 = 64;
 
 /// A compact bitset for tracking node acknowledgments.
-/// 
+///
 /// Each bit position corresponds to a node ID.
 /// Bit N is set if node N has acknowledged.
-/// 
+///
 /// # Performance
 /// - `insert`: O(1) - single bitwise OR
 /// - `count`: O(1) - popcount instruction on modern CPUs
@@ -22,24 +22,30 @@ impl NodeBitset {
     pub fn new() -> Self {
         NodeBitset(0)
     }
-    
+
     /// Set the bit for a node ID.
     #[inline]
     pub fn insert(&mut self, node_id: u32) {
-        debug_assert!(node_id < MAX_CLUSTER_SIZE, "node_id exceeds MAX_CLUSTER_SIZE");
+        debug_assert!(
+            node_id < MAX_CLUSTER_SIZE,
+            "node_id exceeds MAX_CLUSTER_SIZE"
+        );
         self.0 |= 1u64 << node_id;
     }
-    
+
     /// Count the number of set bits (number of acknowledging nodes).
     #[inline]
     pub fn count(&self) -> u32 {
         self.0.count_ones()
     }
-    
+
     /// Check if a node has acknowledged.
     #[inline]
     pub fn contains(&self, node_id: u32) -> bool {
-        debug_assert!(node_id < MAX_CLUSTER_SIZE, "node_id exceeds MAX_CLUSTER_SIZE");
+        debug_assert!(
+            node_id < MAX_CLUSTER_SIZE,
+            "node_id exceeds MAX_CLUSTER_SIZE"
+        );
         (self.0 & (1u64 << node_id)) != 0
     }
 }
@@ -48,10 +54,11 @@ impl NodeBitset {
 ///
 /// In a 3-node cluster, quorum is reached when Primary + 1 Backup have the entry.
 /// Since Primary always has the entry (it wrote it), we need 1 PrepareOk from a Backup.
-/// 
+///
 /// # Performance
 /// Uses a fixed-size bitset (u64) instead of HashSet for tracking node acknowledgments.
 /// This provides O(1) insert and count operations with minimal memory overhead.
+#[allow(dead_code)]
 pub struct QuorumTracker {
     /// Number of nodes in the cluster.
     cluster_size: u32,
@@ -72,7 +79,7 @@ impl QuorumTracker {
     /// # Arguments
     /// * `cluster_size` - Total number of nodes in the cluster (max 64)
     /// * `node_id` - This node's ID (Primary's ID)
-    /// 
+    ///
     /// # Panics
     /// Panics if cluster_size > MAX_CLUSTER_SIZE (64)
     pub fn new(cluster_size: u32, node_id: u32) -> Self {
@@ -88,7 +95,7 @@ impl QuorumTracker {
             node_id,
             cluster_size
         );
-        
+
         // Quorum is majority: (n / 2) + 1
         let quorum_size = (cluster_size / 2) + 1;
 
@@ -192,7 +199,10 @@ impl QuorumTracker {
 
     /// Get the number of votes for a specific index.
     pub fn vote_count(&self, index: u64) -> usize {
-        self.pending.get(&index).map(|v| v.count() as usize).unwrap_or(0)
+        self.pending
+            .get(&index)
+            .map(|v| v.count() as usize)
+            .unwrap_or(0)
     }
 
     /// Get the quorum size required.

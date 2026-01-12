@@ -109,7 +109,7 @@ mod tests {
     fn test_simple_authority_become_primary() {
         let auth = SimpleVsrAuthority::new();
         auth.become_primary_in_view(1);
-        
+
         assert_eq!(auth.durable_view(), 1);
         assert!(auth.is_primary_in_view(1));
         assert!(!auth.is_primary_in_view(0)); // Old view
@@ -121,7 +121,7 @@ mod tests {
         let auth = SimpleVsrAuthority::new();
         auth.become_primary_in_view(1);
         assert!(auth.is_primary_in_view(1));
-        
+
         // Advance view should clear Primary status
         auth.advance_view(2);
         assert_eq!(auth.durable_view(), 2);
@@ -133,7 +133,7 @@ mod tests {
         let auth = SimpleVsrAuthority::new();
         auth.become_primary_in_view(1);
         assert!(auth.is_primary_in_view(1));
-        
+
         auth.step_down();
         assert!(!auth.is_primary_in_view(1));
         assert_eq!(auth.durable_view(), 1); // View unchanged
@@ -144,7 +144,7 @@ mod tests {
         let auth = SimpleVsrAuthority::new();
         auth.advance_view(5);
         assert_eq!(auth.durable_view(), 5);
-        
+
         auth.advance_view(3); // Should be ignored
         assert_eq!(auth.durable_view(), 5);
     }
@@ -153,16 +153,16 @@ mod tests {
     fn test_can_execute_effect() {
         let auth = SimpleVsrAuthority::new();
         auth.become_primary_in_view(1);
-        
+
         // Can execute effects queued in current view
         assert!(auth.can_execute_effect(1));
-        
+
         // Cannot execute effects queued in old view
         assert!(!auth.can_execute_effect(0));
-        
+
         // Cannot execute effects queued in future view
         assert!(!auth.can_execute_effect(2));
-        
+
         // After stepping down, cannot execute
         auth.step_down();
         assert!(!auth.can_execute_effect(1));

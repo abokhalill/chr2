@@ -27,7 +27,10 @@ pub enum FatalError {
 
     /// View ID decreased
     /// Violates: View Supersession (invariants.md III.2)
-    ViewRegression { previous_view: u64, current_view: u64 },
+    ViewRegression {
+        previous_view: u64,
+        current_view: u64,
+    },
 
     /// Payload size exceeds maximum
     /// Per recovery.md: Max Payload Size = 64 MB
@@ -35,7 +38,7 @@ pub enum FatalError {
 
     /// IO error during critical operation
     IoError(io::Error),
-    
+
     /// Internal invariant violation in the consensus/durability layer.
     /// This indicates a bug or corruption that cannot be recovered.
     InvariantViolation {
@@ -47,7 +50,11 @@ pub enum FatalError {
 impl fmt::Display for FatalError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FatalError::BrokenChain { index, expected, found } => {
+            FatalError::BrokenChain {
+                index,
+                expected,
+                found,
+            } => {
                 write!(
                     f,
                     "FATAL: Broken chain at index {}. Expected prev_hash {:02x?}, found {:02x?}",
@@ -61,7 +68,10 @@ impl fmt::Display for FatalError {
                     offset, index
                 )
             }
-            FatalError::ZeroHole { zero_offset, data_offset } => {
+            FatalError::ZeroHole {
+                zero_offset,
+                data_offset,
+            } => {
                 write!(
                     f,
                     "FATAL: Zero-hole detected. Zeros at offset {}, data at offset {}",
@@ -75,7 +85,10 @@ impl fmt::Display for FatalError {
                     expected, found
                 )
             }
-            FatalError::ViewRegression { previous_view, current_view } => {
+            FatalError::ViewRegression {
+                previous_view,
+                current_view,
+            } => {
                 write!(
                     f,
                     "FATAL: View regression. Previous view {}, current view {}",
@@ -83,17 +96,17 @@ impl fmt::Display for FatalError {
                 )
             }
             FatalError::PayloadTooLarge { size, max } => {
-                write!(
-                    f,
-                    "FATAL: Payload size {} exceeds maximum {}",
-                    size, max
-                )
+                write!(f, "FATAL: Payload size {} exceeds maximum {}", size, max)
             }
             FatalError::IoError(e) => {
                 write!(f, "FATAL: IO error: {}", e)
             }
             FatalError::InvariantViolation { component, message } => {
-                write!(f, "FATAL: Invariant violation in {}: {}", component, message)
+                write!(
+                    f,
+                    "FATAL: Invariant violation in {}: {}",
+                    component, message
+                )
             }
         }
     }
@@ -125,7 +138,11 @@ pub enum RecoverableError {
     PayloadHashMismatch { offset: u64, index: u64 },
 
     /// Incomplete read (EOF before expected bytes)
-    IncompleteRead { offset: u64, expected: usize, got: usize },
+    IncompleteRead {
+        offset: u64,
+        expected: usize,
+        got: usize,
+    },
 }
 
 impl fmt::Display for RecoverableError {
@@ -141,7 +158,11 @@ impl fmt::Display for RecoverableError {
                     offset, index
                 )
             }
-            RecoverableError::IncompleteRead { offset, expected, got } => {
+            RecoverableError::IncompleteRead {
+                offset,
+                expected,
+                got,
+            } => {
                 write!(
                     f,
                     "Recoverable: Incomplete read at offset {}. Expected {} bytes, got {}",

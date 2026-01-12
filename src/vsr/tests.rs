@@ -34,7 +34,7 @@ impl TestPaths {
         let manifest_paths: Vec<PathBuf> = (0..count)
             .map(|i| PathBuf::from(format!("/tmp/chr_{}_{}.manifest", prefix, i)))
             .collect();
-        
+
         // Cleanup any existing files
         for path in &log_paths {
             let _ = fs::remove_file(path);
@@ -42,14 +42,17 @@ impl TestPaths {
         for path in &manifest_paths {
             let _ = fs::remove_file(path);
         }
-        
-        TestPaths { log_paths, manifest_paths }
+
+        TestPaths {
+            log_paths,
+            manifest_paths,
+        }
     }
-    
+
     fn log(&self, idx: usize) -> &Path {
         &self.log_paths[idx]
     }
-    
+
     fn manifest(&self, idx: usize) -> &Path {
         &self.manifest_paths[idx]
     }
@@ -114,7 +117,7 @@ fn test_vsr_quorum_commit() {
     let reader_0_exec = LogReader::open(log_path_0, committed_state_0.clone()).unwrap();
     let reader_1 = LogReader::open(log_path_1, committed_state_1.clone()).unwrap();
     let reader_2 = LogReader::open(log_path_2, committed_state_2.clone()).unwrap();
-    
+
     // Create a separate reader for Primary's catch-up functionality
     let reader_0_catchup = LogReader::open(log_path_0, committed_state_0.clone()).unwrap();
 
@@ -137,7 +140,8 @@ fn test_vsr_quorum_commit() {
         ep0,
         Some(executor_0),
         manifest_path_0,
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
@@ -148,7 +152,8 @@ fn test_vsr_quorum_commit() {
         ep1,
         Some(executor_1),
         manifest_path_1,
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_2: VsrNode<BankApp> = VsrNode::new_backup(
         2,
@@ -159,7 +164,8 @@ fn test_vsr_quorum_commit() {
         ep2,
         Some(executor_2),
         manifest_path_2,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Step 1: Disconnect Node 2
     network.disconnect(2);
@@ -181,21 +187,29 @@ fn test_vsr_quorum_commit() {
         node_2.process_all(); // Node 2 is disconnected, won't receive
         thread::sleep(Duration::from_millis(5));
         node_0.process_all();
-        
+
         if node_0.committed_index() == Some(0) {
             break;
         }
     }
 
     // Primary should have committed
-    assert_eq!(node_0.committed_index(), Some(0), "Node 0 should have committed index 0");
+    assert_eq!(
+        node_0.committed_index(),
+        Some(0),
+        "Node 0 should have committed index 0"
+    );
 
     // Backup needs to process the Commit message from Primary
     thread::sleep(Duration::from_millis(5));
     node_1.process_all();
 
     // Now backup should have committed
-    assert_eq!(node_1.committed_index(), Some(0), "Node 1 should have committed index 0");
+    assert_eq!(
+        node_1.committed_index(),
+        Some(0),
+        "Node 1 should have committed index 0"
+    );
 
     // Verify Alice's balance on Node 0
     if let Some(ref executor) = node_0.executor {
@@ -220,7 +234,11 @@ fn test_vsr_quorum_commit() {
     }
 
     // Node 2 should NOT have the entry (disconnected)
-    assert_eq!(node_2.committed_index(), None, "Node 2 should not have committed anything");
+    assert_eq!(
+        node_2.committed_index(),
+        None,
+        "Node 2 should not have committed anything"
+    );
 
     // Step 5: Reconnect Node 2
     network.reconnect(2);
@@ -242,13 +260,13 @@ fn test_vsr_quorum_commit() {
         node_2.process_all(); // Node 2 will get index mismatch error (expected 0, got 1)
         thread::sleep(Duration::from_millis(5));
         node_0.process_all();
-        
+
         // Wait for both Primary to commit AND Backup to receive commit notification
         if node_0.committed_index() == Some(1) && node_1.committed_index() == Some(1) {
             break;
         }
     }
-    
+
     // One more round to ensure commit notification is processed
     node_1.process_all();
 
@@ -258,8 +276,16 @@ fn test_vsr_quorum_commit() {
     // For now, verify the basic flow works
 
     // Verify Node 0 and Node 1 have both entries committed
-    assert_eq!(node_0.committed_index(), Some(1), "Node 0 should have committed index 1");
-    assert_eq!(node_1.committed_index(), Some(1), "Node 1 should have committed index 1");
+    assert_eq!(
+        node_0.committed_index(),
+        Some(1),
+        "Node 0 should have committed index 1"
+    );
+    assert_eq!(
+        node_1.committed_index(),
+        Some(1),
+        "Node 1 should have committed index 1"
+    );
 
     // Cleanup
     let _ = fs::remove_file(log_path_0);
@@ -293,7 +319,8 @@ fn test_vsr_basic_replication() {
         ep0,
         None,
         paths.manifest(0),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
@@ -304,7 +331,8 @@ fn test_vsr_basic_replication() {
         ep1,
         None,
         paths.manifest(1),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Submit entry
     let index = node_0.submit(b"test payload").unwrap();
@@ -354,7 +382,8 @@ fn test_vsr_multiple_entries() {
         ep0,
         None,
         paths.manifest(0),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
@@ -365,7 +394,8 @@ fn test_vsr_multiple_entries() {
         ep1,
         None,
         paths.manifest(1),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Submit multiple entries
     for i in 0..5 {
@@ -381,7 +411,7 @@ fn test_vsr_multiple_entries() {
             node_0.process_all();
             thread::sleep(Duration::from_millis(5));
             node_1.process_all(); // Process commit notification
-            
+
             if node_0.committed_index() == Some(i) && node_1.committed_index() == Some(i) {
                 break;
             }
@@ -432,7 +462,8 @@ fn test_vsr_failure_detection() {
         ep0,
         None,
         paths.manifest(0),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
@@ -443,7 +474,8 @@ fn test_vsr_failure_detection() {
         ep1,
         None,
         paths.manifest(1),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_2: VsrNode<BankApp> = VsrNode::new_backup(
         2,
@@ -454,7 +486,8 @@ fn test_vsr_failure_detection() {
         ep2,
         None,
         paths.manifest(2),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Step 1: Verify initial state - all nodes are in their expected roles
     assert_eq!(node_0.role, super::node::NodeRole::Primary);
@@ -513,7 +546,7 @@ fn test_vsr_failure_detection() {
 /// 3. Backup should NOT start view change as long as heartbeats arrive
 #[test]
 fn test_vsr_heartbeat_prevents_election() {
-    use super::node::{HEARTBEAT_INTERVAL, ELECTION_TIMEOUT};
+    use super::node::{ELECTION_TIMEOUT, HEARTBEAT_INTERVAL};
 
     let paths = TestPaths::new("chr_heartbeat", 2);
 
@@ -538,7 +571,8 @@ fn test_vsr_heartbeat_prevents_election() {
         ep0,
         None,
         paths.manifest(0),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
@@ -549,23 +583,27 @@ fn test_vsr_heartbeat_prevents_election() {
         ep1,
         None,
         paths.manifest(1),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Simulate time passing with heartbeats
     // We'll do 5 rounds of: wait HEARTBEAT_INTERVAL, tick Primary, process Backup
     for _ in 0..5 {
         thread::sleep(HEARTBEAT_INTERVAL + Duration::from_millis(10));
-        
+
         // Primary sends heartbeat
         node_0.tick();
-        
+
         // Backup receives and processes heartbeat
         thread::sleep(Duration::from_millis(5));
         node_1.process_all();
-        
+
         // Backup should NOT have started view change
         let changed = node_1.tick();
-        assert!(!changed, "Backup should not start view change while receiving heartbeats");
+        assert!(
+            !changed,
+            "Backup should not start view change while receiving heartbeats"
+        );
         assert_eq!(node_1.role, super::node::NodeRole::Backup);
     }
 
@@ -615,7 +653,8 @@ fn test_vsr_full_view_change() {
         ep0,
         None,
         paths.manifest(0),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
@@ -626,7 +665,8 @@ fn test_vsr_full_view_change() {
         ep1,
         None,
         paths.manifest(1),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_2: VsrNode<BankApp> = VsrNode::new_backup(
         2,
@@ -637,7 +677,8 @@ fn test_vsr_full_view_change() {
         ep2,
         None,
         paths.manifest(2),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Step 1: Primary submits an entry
     let deposit = BankEvent::Deposit {
@@ -662,7 +703,11 @@ fn test_vsr_full_view_change() {
     }
 
     // Verify entry is committed on Node 0
-    assert_eq!(node_0.committed_index(), Some(0), "Node 0 should have committed");
+    assert_eq!(
+        node_0.committed_index(),
+        Some(0),
+        "Node 0 should have committed"
+    );
 
     // Process commit notification for Node 1 and Node 2
     thread::sleep(Duration::from_millis(10));
@@ -670,7 +715,11 @@ fn test_vsr_full_view_change() {
     node_2.process_all();
 
     // Now verify Node 1 has committed
-    assert_eq!(node_1.committed_index(), Some(0), "Node 1 should have committed");
+    assert_eq!(
+        node_1.committed_index(),
+        Some(0),
+        "Node 1 should have committed"
+    );
 
     // Step 3: "Kill" Node 0 by disconnecting it
     network.disconnect(0);
@@ -682,8 +731,14 @@ fn test_vsr_full_view_change() {
     node_1.tick();
     node_2.tick();
 
-    assert!(node_1.is_view_change_in_progress(), "Node 1 should start view change");
-    assert!(node_2.is_view_change_in_progress(), "Node 2 should start view change");
+    assert!(
+        node_1.is_view_change_in_progress(),
+        "Node 1 should start view change"
+    );
+    assert!(
+        node_2.is_view_change_in_progress(),
+        "Node 2 should start view change"
+    );
 
     // Step 5: Process StartViewChange messages
     // Both nodes broadcast StartViewChange for view 1
@@ -699,7 +754,11 @@ fn test_vsr_full_view_change() {
     }
 
     // View 1 % 3 = 1, so Node 1 should become Primary
-    assert_eq!(node_1.role, super::node::NodeRole::Primary, "Node 1 should be Primary");
+    assert_eq!(
+        node_1.role,
+        super::node::NodeRole::Primary,
+        "Node 1 should be Primary"
+    );
     assert_eq!(node_1.current_view(), 1, "Node 1 should be in view 1");
 
     // Step 6: Node 2 receives StartView and becomes Backup
@@ -712,7 +771,11 @@ fn test_vsr_full_view_change() {
         }
     }
 
-    assert_eq!(node_2.role, super::node::NodeRole::Backup, "Node 2 should be Backup");
+    assert_eq!(
+        node_2.role,
+        super::node::NodeRole::Backup,
+        "Node 2 should be Backup"
+    );
     assert_eq!(node_2.current_view(), 1, "Node 2 should be in view 1");
 
     // Step 7: New Primary (Node 1) can accept requests
@@ -738,8 +801,16 @@ fn test_vsr_full_view_change() {
         }
     }
 
-    assert_eq!(node_1.committed_index(), Some(1), "Node 1 should have committed index 1");
-    assert_eq!(node_2.committed_index(), Some(1), "Node 2 should have committed index 1");
+    assert_eq!(
+        node_1.committed_index(),
+        Some(1),
+        "Node 1 should have committed index 1"
+    );
+    assert_eq!(
+        node_2.committed_index(),
+        Some(1),
+        "Node 2 should have committed index 1"
+    );
 
     // Step 8: Verify fencing - if old Primary wakes up, it should be rejected
     // (In this test, Node 0 is disconnected so it can't send messages anyway)
@@ -757,7 +828,7 @@ fn test_vsr_full_view_change() {
 /// 7. Balance is 100, NOT 200
 #[test]
 fn test_client_exactly_once_during_failover() {
-    use super::client::{chrClient, SessionMap};
+    use super::client::{ChrClient, SessionMap};
     use super::message::{ClientRequest, ClientResult};
     use super::node::ELECTION_TIMEOUT;
 
@@ -788,7 +859,8 @@ fn test_client_exactly_once_during_failover() {
         ep0,
         None,
         paths.manifest(0),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
@@ -799,7 +871,8 @@ fn test_client_exactly_once_during_failover() {
         ep1,
         None,
         paths.manifest(1),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_2: VsrNode<BankApp> = VsrNode::new_backup(
         2,
@@ -810,10 +883,11 @@ fn test_client_exactly_once_during_failover() {
         ep2,
         None,
         paths.manifest(2),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Create a client
-    let mut client = chrClient::new(42, vec![0, 1, 2]);
+    let mut client = ChrClient::new(42, vec![0, 1, 2]);
 
     // Step 1: Client creates a request for "Deposit 100"
     let deposit = BankEvent::Deposit {
@@ -850,7 +924,10 @@ fn test_client_exactly_once_during_failover() {
     let committed = node_0.check_committed_requests();
     assert_eq!(committed.len(), 1, "Should have one committed request");
     assert!(
-        matches!(committed[0].1.result, ClientResult::Success { log_index: 0 }),
+        matches!(
+            committed[0].1.result,
+            ClientResult::Success { log_index: 0 }
+        ),
         "Request should be successful at index 0"
     );
 
@@ -897,7 +974,10 @@ fn test_client_exactly_once_during_failover() {
 
     // The new Primary should recognize this as a duplicate and return cached response
     assert!(
-        matches!(retry_response.result, ClientResult::Success { log_index: 0 }),
+        matches!(
+            retry_response.result,
+            ClientResult::Success { log_index: 0 }
+        ),
         "Retry should return cached success response, got {:?}",
         retry_response.result
     );
@@ -914,7 +994,10 @@ fn test_client_exactly_once_during_failover() {
     let payload2 = serialize_event(&deposit2);
     let request2 = client.create_request(payload2);
 
-    assert_eq!(request2.sequence_number, 2, "Second request should have sequence 2");
+    assert_eq!(
+        request2.sequence_number, 2,
+        "Second request should have sequence 2"
+    );
 
     let response2 = node_1.handle_client_request(&request2);
     assert!(
@@ -940,10 +1023,12 @@ fn test_client_exactly_once_during_failover() {
     let committed2 = node_1.check_committed_requests();
     assert_eq!(committed2.len(), 1);
     assert!(
-        matches!(committed2[0].1.result, ClientResult::Success { log_index: 1 }),
+        matches!(
+            committed2[0].1.result,
+            ClientResult::Success { log_index: 1 }
+        ),
         "New request should be at index 1"
     );
-
 }
 
 /// Test: test_client_redirect_to_leader
@@ -976,7 +1061,8 @@ fn test_chr_jepsen_threaded() {
         ep0,
         None,
         paths.manifest(0),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
@@ -987,7 +1073,8 @@ fn test_chr_jepsen_threaded() {
         ep1,
         None,
         paths.manifest(1),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Create a request
     let request = ClientRequest {
@@ -999,7 +1086,12 @@ fn test_chr_jepsen_threaded() {
     // Send to Backup - should get redirect
     let response = node_1.handle_client_request(&request);
     assert!(
-        matches!(response.result, ClientResult::NotThePrimary { leader_hint: Some(0) }),
+        matches!(
+            response.result,
+            ClientResult::NotThePrimary {
+                leader_hint: Some(0)
+            }
+        ),
         "Backup should redirect to Primary (node 0)"
     );
 
@@ -1022,10 +1114,10 @@ fn test_chr_jepsen_threaded() {
 #[test]
 fn test_outbox_exactly_once_with_failure() {
     use super::node::ELECTION_TIMEOUT;
-    use crate::kernel::traits::{EffectId, SideEffectStatus};
     use crate::kernel::side_effect_manager::{
-        MockEffectExecutor, MockAcknowledgeSubmitter, SideEffectManager, SideEffectManagerConfig,
+        MockAcknowledgeSubmitter, MockEffectExecutor, SideEffectManager, SideEffectManagerConfig,
     };
+    use crate::kernel::traits::{EffectId, SideEffectStatus};
 
     let paths = TestPaths::new("outbox", 3);
 
@@ -1070,7 +1162,8 @@ fn test_outbox_exactly_once_with_failure() {
         ep0,
         Some(executor_0),
         paths.manifest(0),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
@@ -1081,7 +1174,8 @@ fn test_outbox_exactly_once_with_failure() {
         ep1,
         Some(executor_1),
         paths.manifest(1),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_2: VsrNode<BankApp> = VsrNode::new_backup(
         2,
@@ -1092,7 +1186,8 @@ fn test_outbox_exactly_once_with_failure() {
         ep2,
         Some(executor_2),
         paths.manifest(2),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Create mock effect executors to track executions
     let mock_executor_0 = MockEffectExecutor::new();
@@ -1122,25 +1217,42 @@ fn test_outbox_exactly_once_with_failure() {
         thread::sleep(Duration::from_millis(5));
         node_0.process_all();
 
-        if node_0.committed_index() == Some(0) 
-            && node_1.committed_index() == Some(0) 
-            && node_2.committed_index() == Some(0) {
+        if node_0.committed_index() == Some(0)
+            && node_1.committed_index() == Some(0)
+            && node_2.committed_index() == Some(0)
+        {
             break;
         }
     }
 
     // Verify all nodes committed the entry
-    assert_eq!(node_0.committed_index(), Some(0), "Node 0 should have committed");
-    assert_eq!(node_1.committed_index(), Some(0), "Node 1 should have committed");
-    assert_eq!(node_2.committed_index(), Some(0), "Node 2 should have committed");
+    assert_eq!(
+        node_0.committed_index(),
+        Some(0),
+        "Node 0 should have committed"
+    );
+    assert_eq!(
+        node_1.committed_index(),
+        Some(0),
+        "Node 1 should have committed"
+    );
+    assert_eq!(
+        node_2.committed_index(),
+        Some(0),
+        "Node 2 should have committed"
+    );
 
     // Verify the outbox has a pending effect on all nodes
     let effect_id = EffectId::new(client_id, sequence_number, 0);
-    
+
     // Check node 0's executor state
     if let Some(ref executor) = node_0.executor {
         let outbox = executor.state().outbox();
-        assert_eq!(outbox.pending_count(), 1, "Node 0 should have 1 pending effect");
+        assert_eq!(
+            outbox.pending_count(),
+            1,
+            "Node 0 should have 1 pending effect"
+        );
         let entry = outbox.get(&effect_id).expect("Effect should exist");
         assert_eq!(entry.status, SideEffectStatus::Pending);
     }
@@ -1148,7 +1260,11 @@ fn test_outbox_exactly_once_with_failure() {
     // Check node 1's executor state
     if let Some(ref executor) = node_1.executor {
         let outbox = executor.state().outbox();
-        assert_eq!(outbox.pending_count(), 1, "Node 1 should have 1 pending effect");
+        assert_eq!(
+            outbox.pending_count(),
+            1,
+            "Node 1 should have 1 pending effect"
+        );
     }
 
     // Step 2: Simulate Primary executing the effect but dying before AcknowledgeEffect
@@ -1168,10 +1284,18 @@ fn test_outbox_exactly_once_with_failure() {
     }
 
     // Verify effect was executed on node 0
-    assert_eq!(mock_executor_0.get_executed().len(), 1, "Effect should have been executed once");
-    
+    assert_eq!(
+        mock_executor_0.get_executed().len(),
+        1,
+        "Effect should have been executed once"
+    );
+
     // Verify acknowledge was submitted (but we'll simulate it not being committed)
-    assert_eq!(mock_submitter_0.get_submitted().len(), 1, "Acknowledge should have been submitted");
+    assert_eq!(
+        mock_submitter_0.get_submitted().len(),
+        1,
+        "Acknowledge should have been submitted"
+    );
 
     // Step 3: Kill node 0 BEFORE the AcknowledgeEffect can be committed
     network.disconnect(0);
@@ -1212,9 +1336,17 @@ fn test_outbox_exactly_once_with_failure() {
     // (because AcknowledgeEffect was never committed)
     if let Some(ref executor) = new_primary.executor {
         let outbox = executor.state().outbox();
-        assert_eq!(outbox.pending_count(), 1, "New primary should still have 1 pending effect");
+        assert_eq!(
+            outbox.pending_count(),
+            1,
+            "New primary should still have 1 pending effect"
+        );
         let entry = outbox.get(&effect_id).expect("Effect should still exist");
-        assert_eq!(entry.status, SideEffectStatus::Pending, "Effect should still be Pending");
+        assert_eq!(
+            entry.status,
+            SideEffectStatus::Pending,
+            "Effect should still be Pending"
+        );
     }
 
     // Step 5: New Primary re-executes the effect (At-Least-Once delivery)
@@ -1233,7 +1365,11 @@ fn test_outbox_exactly_once_with_failure() {
     }
 
     // Verify effect was executed again (At-Least-Once)
-    assert_eq!(mock_executor_1.get_executed().len(), 1, "Effect should have been executed on new primary");
+    assert_eq!(
+        mock_executor_1.get_executed().len(),
+        1,
+        "Effect should have been executed on new primary"
+    );
 
     // Step 6: Now submit and commit the AcknowledgeEffect
     let ack_event = BankEvent::SystemAcknowledgeEffect { effect_id };
@@ -1252,7 +1388,7 @@ fn test_outbox_exactly_once_with_failure() {
 
         let committed_1 = node_1.committed_index();
         let committed_2 = node_2.committed_index();
-        
+
         if committed_1 >= Some(ack_index) && committed_2 >= Some(ack_index) {
             break;
         }
@@ -1261,18 +1397,33 @@ fn test_outbox_exactly_once_with_failure() {
     // Step 7: Verify the effect is now Acknowledged on all live nodes
     if let Some(ref executor) = node_1.executor {
         let outbox = executor.state().outbox();
-        assert_eq!(outbox.pending_count(), 0, "Node 1 should have 0 pending effects after ack");
+        assert_eq!(
+            outbox.pending_count(),
+            0,
+            "Node 1 should have 0 pending effects after ack"
+        );
         let entry = outbox.get(&effect_id).expect("Effect should still exist");
-        assert_eq!(entry.status, SideEffectStatus::Acknowledged, "Effect should be Acknowledged");
+        assert_eq!(
+            entry.status,
+            SideEffectStatus::Acknowledged,
+            "Effect should be Acknowledged"
+        );
     }
 
     if let Some(ref executor) = node_2.executor {
         let outbox = executor.state().outbox();
-        assert_eq!(outbox.pending_count(), 0, "Node 2 should have 0 pending effects after ack");
+        assert_eq!(
+            outbox.pending_count(),
+            0,
+            "Node 2 should have 0 pending effects after ack"
+        );
         let entry = outbox.get(&effect_id).expect("Effect should still exist");
-        assert_eq!(entry.status, SideEffectStatus::Acknowledged, "Effect should be Acknowledged");
+        assert_eq!(
+            entry.status,
+            SideEffectStatus::Acknowledged,
+            "Effect should be Acknowledged"
+        );
     }
-
 }
 
 /// Test: test_chr_survivability
@@ -1288,7 +1439,7 @@ fn test_outbox_exactly_once_with_failure() {
 #[test]
 fn test_chr_survivability() {
     use super::message::{ClientRequest, ClientResult};
-    
+
     let paths = TestPaths::new("survivability", 3);
 
     let mut network = MockNetwork::new(3);
@@ -1332,7 +1483,8 @@ fn test_chr_survivability() {
         ep0,
         Some(executor_0),
         paths.manifest(0),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
@@ -1343,7 +1495,8 @@ fn test_chr_survivability() {
         ep1,
         Some(executor_1),
         paths.manifest(1),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut node_2: VsrNode<BankApp> = VsrNode::new_backup(
         2,
@@ -1354,7 +1507,8 @@ fn test_chr_survivability() {
         ep2,
         Some(executor_2),
         paths.manifest(2),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Step 1: Set max_inflight_requests to 50
     const MAX_INFLIGHT: usize = 50;
@@ -1372,7 +1526,7 @@ fn test_chr_survivability() {
             amount: 100,
         };
         let payload = serialize_event(&deposit);
-        
+
         let request = ClientRequest {
             client_id: 1000 + i as u64,
             sequence_number: 1,
@@ -1380,7 +1534,7 @@ fn test_chr_survivability() {
         };
 
         let response = node_0.handle_client_request(&request);
-        
+
         match &response.result {
             ClientResult::Pending => {
                 accepted_count += 1;
@@ -1407,21 +1561,25 @@ fn test_chr_survivability() {
         MAX_INFLIGHT, accepted_count
     );
     assert_eq!(
-        rejected_count, TOTAL_REQUESTS - MAX_INFLIGHT,
+        rejected_count,
+        TOTAL_REQUESTS - MAX_INFLIGHT,
         "Expected {} rejected requests, got {}",
-        TOTAL_REQUESTS - MAX_INFLIGHT, rejected_count
+        TOTAL_REQUESTS - MAX_INFLIGHT,
+        rejected_count
     );
 
     // Verify in-flight count matches accepted count
     assert_eq!(
-        node_0.inflight_count(), MAX_INFLIGHT,
+        node_0.inflight_count(),
+        MAX_INFLIGHT,
         "In-flight count should be {}",
         MAX_INFLIGHT
     );
 
     // Verify rejected_count metric
     assert_eq!(
-        node_0.rejected_count() as usize, rejected_count,
+        node_0.rejected_count() as usize,
+        rejected_count,
         "Rejected count metric should match"
     );
 
@@ -1433,7 +1591,7 @@ fn test_chr_survivability() {
         node_2.process_all();
         thread::sleep(Duration::from_millis(2));
         node_0.process_all();
-        
+
         // Check committed requests
         let _ = node_0.check_committed_requests();
 
@@ -1441,10 +1599,11 @@ fn test_chr_survivability() {
         let node_0_committed = node_0.committed_index();
         let node_1_committed = node_1.committed_index();
         let node_2_committed = node_2.committed_index();
-        
-        if node_0_committed == Some(MAX_INFLIGHT as u64 - 1) 
+
+        if node_0_committed == Some(MAX_INFLIGHT as u64 - 1)
             && node_1_committed == Some(MAX_INFLIGHT as u64 - 1)
-            && node_2_committed == Some(MAX_INFLIGHT as u64 - 1) {
+            && node_2_committed == Some(MAX_INFLIGHT as u64 - 1)
+        {
             break;
         }
     }
@@ -1458,7 +1617,8 @@ fn test_chr_survivability() {
 
     // Verify in-flight count dropped to 0 after commits
     assert_eq!(
-        node_0.inflight_count(), 0,
+        node_0.inflight_count(),
+        0,
         "In-flight count should be 0 after all commits"
     );
 
@@ -1480,7 +1640,7 @@ fn test_chr_survivability() {
         amount: 500,
     };
     let new_payload = serialize_event(&new_deposit);
-    
+
     let new_request = ClientRequest {
         client_id: 9999,
         sequence_number: 1,
@@ -1525,39 +1685,39 @@ fn test_chr_survivability() {
 #[test]
 fn test_scheduler_fairness() {
     use super::node::RequestBatcher;
-    
+
     let mut batcher = RequestBatcher::new();
-    
+
     // Client A (Spammer): 100 requests
     let client_a_id = 1000;
     for i in 0..100 {
         let payload = format!("spammer_request_{}", i).into_bytes();
         batcher.add(payload, client_a_id, i as u64);
     }
-    
+
     // Client B (Admin): 10 requests
     let client_b_id = 2000;
     for i in 0..10 {
         let payload = format!("admin_request_{}", i).into_bytes();
         batcher.add(payload, client_b_id, i as u64);
     }
-    
+
     // Verify we have 2 clients
     assert_eq!(batcher.client_count(), 2, "Should have 2 unique clients");
-    
+
     // Take the batch with round-robin scheduling
     let (payloads, clients) = batcher.take_batch();
-    
+
     // Verify total count
     assert_eq!(payloads.len(), 110, "Should have 110 total requests");
     assert_eq!(clients.len(), 110, "Should have 110 client entries");
-    
+
     // Verify fairness: check that the first 20 entries alternate between clients
     // With round-robin, we expect: A, B, A, B, A, B, ... for the first 20 entries
     // (since B only has 10 requests, after that it's all A)
     let mut client_a_in_first_20 = 0;
     let mut client_b_in_first_20 = 0;
-    
+
     for (client_id, _seq) in clients.iter().take(20) {
         if *client_id == client_a_id {
             client_a_in_first_20 += 1;
@@ -1565,7 +1725,7 @@ fn test_scheduler_fairness() {
             client_b_in_first_20 += 1;
         }
     }
-    
+
     // With round-robin, first 20 should be 10 from A and 10 from B
     assert_eq!(
         client_a_in_first_20, 10,
@@ -1577,13 +1737,13 @@ fn test_scheduler_fairness() {
         "First 20 entries should have 10 from Client B (got {})",
         client_b_in_first_20
     );
-    
+
     // Verify interleaving: check that we don't have long runs of the same client
     // In round-robin, we should never have more than 1 consecutive request from
     // the same client (until one queue is exhausted)
     let mut max_consecutive_a = 0;
     let mut current_consecutive_a = 0;
-    
+
     for (i, (client_id, _)) in clients.iter().enumerate() {
         if *client_id == client_a_id {
             current_consecutive_a += 1;
@@ -1593,7 +1753,7 @@ fn test_scheduler_fairness() {
         } else {
             current_consecutive_a = 0;
         }
-        
+
         // After Client B is exhausted (index 19), we expect all A
         if i < 20 {
             assert!(
@@ -1603,16 +1763,23 @@ fn test_scheduler_fairness() {
             );
         }
     }
-    
+
     // After B is exhausted, remaining 90 requests should all be from A
-    let remaining_a: usize = clients.iter().skip(20).filter(|(id, _)| *id == client_a_id).count();
+    let remaining_a: usize = clients
+        .iter()
+        .skip(20)
+        .filter(|(id, _)| *id == client_a_id)
+        .count();
     assert_eq!(
         remaining_a, 90,
         "After B exhausted, remaining 90 should be from A"
     );
-    
+
     // Verify batcher is reset
-    assert!(!batcher.has_pending(), "Batcher should be empty after take_batch");
+    assert!(
+        !batcher.has_pending(),
+        "Batcher should be empty after take_batch"
+    );
     assert_eq!(batcher.pending_count(), 0, "Pending count should be 0");
     assert_eq!(batcher.client_count(), 0, "Client count should be 0");
 }
@@ -1632,31 +1799,35 @@ fn test_scheduler_fairness() {
 #[test]
 fn test_deterministic_drift_protection() {
     use super::message::{ClientRequest, ClientResult, PreparedEntry, VsrMessage};
-    
+
     // Test that PrepareBatch carries timestamp and it's consistent
     let timestamp_ns: u64 = 1_700_000_000_000_000_000; // Fixed timestamp
-    
+
     // Create a PrepareBatch message with a specific timestamp
     let prepare_batch = VsrMessage::PrepareBatch {
         view: 1,
         start_index: 0,
-        entries: vec![
-            PreparedEntry {
-                index: 0,
-                payload: b"test_payload".to_vec(),
-            },
-        ],
+        entries: vec![PreparedEntry {
+            index: 0,
+            payload: b"test_payload".to_vec(),
+        }],
         commit_index: None,
         timestamp_ns,
     };
-    
+
     // Verify the message carries the timestamp correctly
-    if let VsrMessage::PrepareBatch { timestamp_ns: ts, .. } = prepare_batch {
-        assert_eq!(ts, timestamp_ns, "PrepareBatch should carry the exact timestamp");
+    if let VsrMessage::PrepareBatch {
+        timestamp_ns: ts, ..
+    } = prepare_batch
+    {
+        assert_eq!(
+            ts, timestamp_ns,
+            "PrepareBatch should carry the exact timestamp"
+        );
     } else {
         panic!("Expected PrepareBatch message");
     }
-    
+
     // Test that Prepare also carries timestamp
     let prepare = VsrMessage::Prepare {
         view: 1,
@@ -1665,18 +1836,21 @@ fn test_deterministic_drift_protection() {
         commit_index: None,
         timestamp_ns,
     };
-    
-    if let VsrMessage::Prepare { timestamp_ns: ts, .. } = prepare {
+
+    if let VsrMessage::Prepare {
+        timestamp_ns: ts, ..
+    } = prepare
+    {
         assert_eq!(ts, timestamp_ns, "Prepare should carry the exact timestamp");
     } else {
         panic!("Expected Prepare message");
     }
-    
+
     // Test deterministic random seed derivation
     // Two nodes with the same prev_hash and index should get the same seed
     let prev_hash: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
     let index: u64 = 42;
-    
+
     // Derive seed using BLAKE3(prev_hash || index)
     let derive_seed = |prev_hash: &[u8; 16], index: u64| -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
@@ -1684,30 +1858,47 @@ fn test_deterministic_drift_protection() {
         hasher.update(&index.to_le_bytes());
         *hasher.finalize().as_bytes()
     };
-    
+
     let seed1 = derive_seed(&prev_hash, index);
     let seed2 = derive_seed(&prev_hash, index);
-    
+
     // Same inputs should produce same seed (deterministic)
-    assert_eq!(seed1, seed2, "Same prev_hash and index should produce same seed");
-    
+    assert_eq!(
+        seed1, seed2,
+        "Same prev_hash and index should produce same seed"
+    );
+
     // Different index should produce different seed
     let seed3 = derive_seed(&prev_hash, index + 1);
-    assert_ne!(seed1, seed3, "Different index should produce different seed");
-    
+    assert_ne!(
+        seed1, seed3,
+        "Different index should produce different seed"
+    );
+
     // Different prev_hash should produce different seed
     let different_prev_hash: [u8; 16] = [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
     let seed4 = derive_seed(&different_prev_hash, index);
-    assert_ne!(seed1, seed4, "Different prev_hash should produce different seed");
-    
+    assert_ne!(
+        seed1, seed4,
+        "Different prev_hash should produce different seed"
+    );
+
     // Verify BlockTime derivation is deterministic
     use crate::kernel::traits::BlockTime;
-    
+
     let block_time1 = BlockTime::from_nanos(timestamp_ns);
     let block_time2 = BlockTime::from_nanos(timestamp_ns);
-    
-    assert_eq!(block_time1.as_nanos(), block_time2.as_nanos(), "BlockTime should be deterministic");
-    assert_eq!(block_time1.as_secs(), 1_700_000_000, "BlockTime seconds should match");
+
+    assert_eq!(
+        block_time1.as_nanos(),
+        block_time2.as_nanos(),
+        "BlockTime should be deterministic"
+    );
+    assert_eq!(
+        block_time1.as_secs(),
+        1_700_000_000,
+        "BlockTime seconds should match"
+    );
 }
 
 /// Test async durability mode with DurabilityWorker.
@@ -1719,34 +1910,32 @@ fn test_deterministic_drift_protection() {
 /// 4. Heartbeats continue regardless of pending durability work
 #[test]
 fn test_async_durability_mode() {
-    use crate::engine::durability::DurabilityWorker;
     use super::node::HEARTBEAT_INTERVAL;
-    
+    use crate::engine::durability::DurabilityWorker;
+
     let paths = TestPaths::new("async_durability", 2);
-    
+
     // Create DurabilityWorker for node 0
     let worker = DurabilityWorker::create(paths.log(0), 1).unwrap();
     let handle = worker.handle();
-    
+
     // Create a separate LogWriter for node 1 (backup uses sync mode)
     let writer_1 = LogWriter::create(paths.log(1), 1).unwrap();
-    
+
     // Create committed states
     let committed_state_0 = Arc::new(CommittedState::new());
     let committed_state_1 = Arc::new(CommittedState::new());
-    
+
     // Create mock network
     let mut network = MockNetwork::new(2);
     let ep_0 = network.create_endpoint(0).unwrap();
     let ep_1 = network.create_endpoint(1).unwrap();
-    
+
     // Create a dummy LogWriter for node 0 (won't be used in async mode)
     // We need this because VsrNode still requires a LogWriter field
-    let dummy_writer_0 = LogWriter::create(
-        &PathBuf::from("/tmp/chr_async_durability_dummy.log"), 
-        1
-    ).unwrap();
-    
+    let dummy_writer_0 =
+        LogWriter::create(&PathBuf::from("/tmp/chr_async_durability_dummy.log"), 1).unwrap();
+
     // Create Primary node with async durability
     let mut node_0: VsrNode<BankApp> = VsrNode::new_primary(
         0,
@@ -1758,12 +1947,13 @@ fn test_async_durability_mode() {
         ep_0,
         None, // No executor for this test
         paths.manifest(0),
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     // Enable async durability mode
     node_0.enable_async_durability(handle.clone());
     assert!(node_0.is_async_durability_enabled());
-    
+
     // Create Backup node (sync mode)
     let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
@@ -1774,47 +1964,69 @@ fn test_async_durability_mode() {
         ep_1,
         None,
         paths.manifest(1),
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     // Add requests to the batcher
-    let event1 = BankEvent::Deposit { user: "alice".to_string(), amount: 100 };
-    let event2 = BankEvent::Deposit { user: "bob".to_string(), amount: 200 };
-    
+    let event1 = BankEvent::Deposit {
+        user: "alice".to_string(),
+        amount: 100,
+    };
+    let event2 = BankEvent::Deposit {
+        user: "bob".to_string(),
+        amount: 200,
+    };
+
     node_0.batcher.add(serialize_event(&event1), 1, 1);
     node_0.batcher.add(serialize_event(&event2), 2, 1);
-    
+
     // Flush batch - in async mode, this should return immediately
     let tracking = node_0.flush_batch().unwrap();
-    
+
     // In async mode, tracking should be empty (deferred)
-    assert!(tracking.is_empty(), "Async mode should return empty tracking");
-    
+    assert!(
+        tracking.is_empty(),
+        "Async mode should return empty tracking"
+    );
+
     // Should have one pending durability batch
     assert_eq!(node_0.pending_durability_count(), 1);
-    
+
     // Heartbeat should still work regardless of pending durability
     std::thread::sleep(HEARTBEAT_INTERVAL + Duration::from_millis(10));
     node_0.tick();
-    
+
     // Verify heartbeat was sent (check backup received it)
     let msg = node_1.network.try_recv();
     assert!(msg.is_some(), "Backup should receive heartbeat");
-    
+
     // Now process durability completions
     let completions = worker.drain_completions();
-    assert!(!completions.is_empty(), "Should have durability completions");
-    
+    assert!(
+        !completions.is_empty(),
+        "Should have durability completions"
+    );
+
     let processed = node_0.process_durability_completions(&completions);
     assert_eq!(processed, 1, "Should process one completion");
-    
+
     // Pending durability should be cleared
     assert_eq!(node_0.pending_durability_count(), 0);
-    
+
     // PrepareBatch should have been broadcast - backup should receive it
     let msg = node_1.network.try_recv();
     assert!(msg.is_some(), "Backup should receive PrepareBatch");
-    
-    if let Some((from, VsrMessage::PrepareBatch { view, start_index, entries, .. })) = msg {
+
+    if let Some((
+        from,
+        VsrMessage::PrepareBatch {
+            view,
+            start_index,
+            entries,
+            ..
+        },
+    )) = msg
+    {
         assert_eq!(from, 0);
         assert_eq!(view, 1);
         assert_eq!(start_index, 0);
@@ -1822,7 +2034,7 @@ fn test_async_durability_mode() {
     } else {
         panic!("Expected PrepareBatch message");
     }
-    
+
     // Cleanup
     worker.shutdown_and_join().unwrap();
     let _ = fs::remove_file("/tmp/chr_async_durability_dummy.log");
@@ -1835,19 +2047,19 @@ fn test_async_durability_mode() {
 #[test]
 fn test_heartbeat_decoupled_from_flush() {
     use super::node::HEARTBEAT_INTERVAL;
-    
+
     let paths = TestPaths::new("heartbeat_decoupled", 2);
-    
+
     let writer_0 = LogWriter::create(paths.log(0), 1).unwrap();
     let writer_1 = LogWriter::create(paths.log(1), 1).unwrap();
-    
+
     let committed_state_0 = Arc::new(CommittedState::new());
     let committed_state_1 = Arc::new(CommittedState::new());
-    
+
     let mut network = MockNetwork::new(2);
     let ep_0 = network.create_endpoint(0).unwrap();
     let ep_1 = network.create_endpoint(1).unwrap();
-    
+
     let mut node_0: VsrNode<BankApp> = VsrNode::new_primary(
         0,
         2,
@@ -1858,8 +2070,9 @@ fn test_heartbeat_decoupled_from_flush() {
         ep_0,
         None,
         paths.manifest(0),
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
         2,
@@ -1869,18 +2082,19 @@ fn test_heartbeat_decoupled_from_flush() {
         ep_1,
         None,
         paths.manifest(1),
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     // Wait for heartbeat interval
     std::thread::sleep(HEARTBEAT_INTERVAL + Duration::from_millis(10));
-    
+
     // Tick should send heartbeat first, before any batch processing
     node_0.tick();
-    
+
     // Backup should receive heartbeat
     let msg = node_1.network.try_recv();
     assert!(msg.is_some(), "Backup should receive heartbeat");
-    
+
     if let Some((from, VsrMessage::Commit { view, commit_index })) = msg {
         assert_eq!(from, 0);
         assert_eq!(view, 1);
@@ -1888,7 +2102,7 @@ fn test_heartbeat_decoupled_from_flush() {
     } else {
         panic!("Expected Commit (heartbeat) message");
     }
-    
+
     // Verify HEARTBEAT_INTERVAL and ELECTION_TIMEOUT are tuned correctly
     assert_eq!(HEARTBEAT_INTERVAL, Duration::from_millis(100));
     assert_eq!(super::node::ELECTION_TIMEOUT, Duration::from_millis(1000));
@@ -1912,11 +2126,8 @@ fn test_chronon_io_isolation() {
     let ep_0 = network.create_endpoint(0).unwrap();
     let ep_1 = network.create_endpoint(1).unwrap();
 
-    let dummy_writer_0 = LogWriter::create(
-        &PathBuf::from("/tmp/chr_chronon_io_isolation_dummy.log"),
-        1,
-    )
-    .unwrap();
+    let dummy_writer_0 =
+        LogWriter::create(&PathBuf::from("/tmp/chr_chronon_io_isolation_dummy.log"), 1).unwrap();
 
     let mut node_0: VsrNode<BankApp> = VsrNode::new_primary(
         0,
@@ -1944,12 +2155,22 @@ fn test_chronon_io_isolation() {
     )
     .unwrap();
 
-    node_0
-        .batcher
-        .add(serialize_event(&BankEvent::Deposit { user: "a".to_string(), amount: 1 }), 1, 1);
-    node_0
-        .batcher
-        .add(serialize_event(&BankEvent::Deposit { user: "b".to_string(), amount: 1 }), 2, 1);
+    node_0.batcher.add(
+        serialize_event(&BankEvent::Deposit {
+            user: "a".to_string(),
+            amount: 1,
+        }),
+        1,
+        1,
+    );
+    node_0.batcher.add(
+        serialize_event(&BankEvent::Deposit {
+            user: "b".to_string(),
+            amount: 1,
+        }),
+        2,
+        1,
+    );
 
     std::thread::sleep(super::node::MAX_BATCH_DELAY + Duration::from_millis(2));
     node_0.tick();

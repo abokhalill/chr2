@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::engine::format::{
-    compute_chain_hash, compute_payload_hash, frame_size, LogHeader, LogMetadata,
-    HEADER_SIZE, LOG_METADATA_SIZE,
+    compute_chain_hash, compute_payload_hash, frame_size, LogHeader, LogMetadata, HEADER_SIZE,
+    LOG_METADATA_SIZE,
 };
 
 #[derive(Debug, Clone)]
@@ -27,12 +27,25 @@ pub struct LogEntry {
 #[derive(Debug)]
 pub enum ReadError {
     /// ENFORCES F3: Reader cannot observe uncommitted entries.
-    IndexNotCommitted { requested: u64, committed: Option<u64> },
-    IndexNotFound { requested: u64 },
-    IndexTruncated { requested: u64, base_index: u64 },
+    IndexNotCommitted {
+        requested: u64,
+        committed: Option<u64>,
+    },
+    IndexNotFound {
+        requested: u64,
+    },
+    IndexTruncated {
+        requested: u64,
+        base_index: u64,
+    },
     Io(io::Error),
-    ValidationFailed { index: u64, reason: &'static str },
-    TruncatedDuringRead { index: u64 },
+    ValidationFailed {
+        index: u64,
+        reason: &'static str,
+    },
+    TruncatedDuringRead {
+        index: u64,
+    },
 }
 
 impl From<io::Error> for ReadError {
@@ -44,21 +57,39 @@ impl From<io::Error> for ReadError {
 impl std::fmt::Display for ReadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ReadError::IndexNotCommitted { requested, committed } => {
-                write!(f, "Index {} not committed (committed: {:?})", requested, committed)
+            ReadError::IndexNotCommitted {
+                requested,
+                committed,
+            } => {
+                write!(
+                    f,
+                    "Index {} not committed (committed: {:?})",
+                    requested, committed
+                )
             }
             ReadError::IndexNotFound { requested } => {
                 write!(f, "Index {} not found", requested)
             }
-            ReadError::IndexTruncated { requested, base_index } => {
-                write!(f, "Index {} was truncated (base_index: {})", requested, base_index)
+            ReadError::IndexTruncated {
+                requested,
+                base_index,
+            } => {
+                write!(
+                    f,
+                    "Index {} was truncated (base_index: {})",
+                    requested, base_index
+                )
             }
             ReadError::Io(e) => write!(f, "IO error: {}", e),
             ReadError::ValidationFailed { index, reason } => {
                 write!(f, "Validation failed at index {}: {}", index, reason)
             }
             ReadError::TruncatedDuringRead { index } => {
-                write!(f, "Entry {} truncated during read (concurrent recovery)", index)
+                write!(
+                    f,
+                    "Entry {} truncated during read (concurrent recovery)",
+                    index
+                )
             }
         }
     }
@@ -128,15 +159,15 @@ pub struct LogReader {
 impl LogReader {
     pub fn open(path: &Path, committed_state: Arc<CommittedState>) -> io::Result<Self> {
         let mut file = File::open(path)?;
-        
+
         // Check file size to determine if it has a metadata header
         let file_size = file.seek(SeekFrom::End(0))?;
-        
+
         let (base_index, base_prev_hash) = if file_size >= LOG_METADATA_SIZE as u64 {
             file.seek(SeekFrom::Start(0))?;
             let mut meta_buf = [0u8; LOG_METADATA_SIZE];
             let bytes_read = file.read(&mut meta_buf)?;
-            
+
             if bytes_read == LOG_METADATA_SIZE {
                 let metadata = LogMetadata::from_bytes(&meta_buf);
                 if metadata.verify_magic() && metadata.verify_checksum() {
@@ -150,7 +181,7 @@ impl LogReader {
         } else {
             (0, crate::engine::format::GENESIS_HASH)
         };
-        
+
         Ok(LogReader {
             file,
             path: path.to_path_buf(),
@@ -160,7 +191,7 @@ impl LogReader {
             base_prev_hash,
         })
     }
-    
+
     #[inline]
     pub fn path(&self) -> &Path {
         &self.path
@@ -182,14 +213,14 @@ impl LogReader {
 
         // VISIBILITY CHECK: Acquire load - the ONLY source of truth.
         let committed = self.committed_state.committed_index.load(Ordering::Acquire);
-        
+
         if committed == u64::MAX {
             return Err(ReadError::IndexNotCommitted {
                 requested: index,
                 committed: None,
             });
         }
-        
+
         if index > committed {
             return Err(ReadError::IndexNotCommitted {
                 requested: index,
@@ -205,7 +236,7 @@ impl LogReader {
     pub fn read_range(&mut self, start: u64, end: u64) -> Result<Vec<LogEntry>, ReadError> {
         // Snapshot committed_index ONCE for consistent view.
         let committed = self.committed_state.committed_index.load(Ordering::Acquire);
-        
+
         if committed == u64::MAX {
             return Err(ReadError::IndexNotCommitted {
                 requested: start,
@@ -214,7 +245,7 @@ impl LogReader {
         }
 
         let effective_end = end.min(committed);
-        
+
         if start > effective_end {
             return Err(ReadError::IndexNotCommitted {
                 requested: start,
@@ -223,7 +254,7 @@ impl LogReader {
         }
 
         let mut entries = Vec::with_capacity((effective_end - start + 1) as usize);
-        
+
         for idx in start..=effective_end {
             match self.read_entry_internal(idx) {
                 Ok(entry) => entries.push(entry),
@@ -238,7 +269,7 @@ impl LogReader {
     /// Returns entries [0, committed_index] at snapshot time.
     pub fn scan_all(&mut self) -> Result<Vec<LogEntry>, ReadError> {
         let committed = self.committed_state.committed_index.load(Ordering::Acquire);
-        
+
         if committed == u64::MAX {
             return Ok(Vec::new());
         }
@@ -263,9 +294,13 @@ impl LogReader {
 
         let start_cache_pos = self.index_offsets.len();
         let start_index = self.base_index + start_cache_pos as u64;
-        
+
         let start_offset = if self.index_offsets.is_empty() {
-            if self.base_index > 0 { LOG_METADATA_SIZE as u64 } else { 0 }
+            if self.base_index > 0 {
+                LOG_METADATA_SIZE as u64
+            } else {
+                0
+            }
         } else {
             let last_cache_idx = self.index_offsets.len() - 1;
             let last_offset = self.index_offsets[last_cache_idx];
@@ -281,7 +316,7 @@ impl LogReader {
             }
 
             let header = self.read_header_at_offset(offset)?;
-            
+
             if header.index != logical_idx {
                 return Err(ReadError::ValidationFailed {
                     index: logical_idx,
@@ -298,16 +333,16 @@ impl LogReader {
 
     fn read_header_at_offset(&mut self, offset: u64) -> Result<LogHeader, ReadError> {
         self.file.seek(SeekFrom::Start(offset))?;
-        
+
         let mut header_buf = [0u8; HEADER_SIZE];
         let bytes_read = self.file.read(&mut header_buf)?;
-        
+
         if bytes_read < HEADER_SIZE {
             return Err(ReadError::TruncatedDuringRead { index: u64::MAX });
         }
 
         let header = LogHeader::from_bytes(&header_buf);
-        
+
         if !header.verify_checksum() {
             return Err(ReadError::ValidationFailed {
                 index: header.index,
@@ -318,9 +353,13 @@ impl LogReader {
         Ok(header)
     }
 
-    fn read_entry_at_offset(&mut self, offset: u64, expected_index: u64) -> Result<LogEntry, ReadError> {
+    fn read_entry_at_offset(
+        &mut self,
+        offset: u64,
+        expected_index: u64,
+    ) -> Result<LogEntry, ReadError> {
         let header = self.read_header_at_offset(offset)?;
-        
+
         if header.index != expected_index {
             return Err(ReadError::ValidationFailed {
                 index: expected_index,
@@ -331,12 +370,14 @@ impl LogReader {
         // Read payload
         let payload_offset = offset + HEADER_SIZE as u64;
         self.file.seek(SeekFrom::Start(payload_offset))?;
-        
+
         let mut payload = vec![0u8; header.payload_size as usize];
         let bytes_read = self.file.read(&mut payload)?;
-        
+
         if bytes_read < header.payload_size as usize {
-            return Err(ReadError::TruncatedDuringRead { index: expected_index });
+            return Err(ReadError::TruncatedDuringRead {
+                index: expected_index,
+            });
         }
 
         let computed_hash = compute_payload_hash(&payload);
@@ -387,14 +428,14 @@ impl LogReader {
     /// Computed as: BLAKE3(Header[4..64] || Payload)[0..16]
     pub fn get_chain_hash(&mut self, index: u64) -> Result<[u8; 16], ReadError> {
         let committed = self.committed_state.committed_index.load(Ordering::Acquire);
-        
+
         if committed == u64::MAX {
             return Err(ReadError::IndexNotCommitted {
                 requested: index,
                 committed: None,
             });
         }
-        
+
         if index > committed {
             return Err(ReadError::IndexNotCommitted {
                 requested: index,
@@ -406,10 +447,10 @@ impl LogReader {
         let header = self.read_header_at_offset(offset)?;
         let payload_offset = offset + HEADER_SIZE as u64;
         self.file.seek(SeekFrom::Start(payload_offset))?;
-        
+
         let mut payload = vec![0u8; header.payload_size as usize];
         let bytes_read = self.file.read(&mut payload)?;
-        
+
         if bytes_read < header.payload_size as usize {
             return Err(ReadError::TruncatedDuringRead { index });
         }
@@ -448,13 +489,15 @@ mod tests {
 
     fn create_test_log(path: &Path, committed_state: &Arc<CommittedState>, entries: &[&[u8]]) {
         use crate::engine::log::LogWriter;
-        
+
         // Create writer - but we need to use the shared committed state
         // For testing, we'll create entries and manually update committed state
         let mut writer = LogWriter::create(path, 1).unwrap();
-        
+
         for (i, payload) in entries.iter().enumerate() {
-            writer.append(payload, 0, 0, 1_000_000_000 + i as u64 * 1_000_000_000).unwrap();
+            writer
+                .append(payload, 0, 0, 1_000_000_000 + i as u64 * 1_000_000_000)
+                .unwrap();
             // Update shared committed state
             committed_state.advance(i as u64);
         }
@@ -467,7 +510,7 @@ mod tests {
         let _ = fs::remove_file(path);
 
         let committed_state = Arc::new(CommittedState::new());
-        
+
         // Create log with entries
         create_test_log(path, &committed_state, &[b"entry0", b"entry1", b"entry2"]);
 
@@ -481,7 +524,10 @@ mod tests {
 
         // committed_index is 2, so index 3 should fail
         match reader.read(3) {
-            Err(ReadError::IndexNotCommitted { requested: 3, committed: Some(2) }) => {}
+            Err(ReadError::IndexNotCommitted {
+                requested: 3,
+                committed: Some(2),
+            }) => {}
             other => panic!("Expected IndexNotCommitted, got {:?}", other),
         }
 
@@ -502,9 +548,12 @@ mod tests {
         // No entries committed
         assert!(reader.is_empty());
         assert_eq!(reader.len(), 0);
-        
+
         match reader.read(0) {
-            Err(ReadError::IndexNotCommitted { requested: 0, committed: None }) => {}
+            Err(ReadError::IndexNotCommitted {
+                requested: 0,
+                committed: None,
+            }) => {}
             other => panic!("Expected IndexNotCommitted with None, got {:?}", other),
         }
 
@@ -539,7 +588,7 @@ mod tests {
         create_test_log(path, &committed_state, &[b"0", b"1", b"2"]);
 
         let mut reader = LogReader::open(path, committed_state).unwrap();
-        
+
         // Request range [0, 100] but only 3 entries committed
         let entries = reader.read_range(0, 100).unwrap();
         assert_eq!(entries.len(), 3);
@@ -554,7 +603,7 @@ mod tests {
         let _ = fs::remove_file(path);
 
         let committed_state = Arc::new(CommittedState::new());
-        
+
         // Initially no entries
         {
             fs::File::create(path).unwrap();
@@ -582,13 +631,13 @@ mod tests {
         let _ = fs::remove_file(path);
 
         let committed_state = Arc::new(CommittedState::new());
-        
+
         // Create initial entries
         create_test_log(path, &committed_state, &[b"initial"]);
 
         // Reader in separate scope
         let mut reader = LogReader::open(path, committed_state.clone()).unwrap();
-        
+
         // Reader sees 1 entry
         assert_eq!(reader.len(), 1);
         let entry = reader.read(0).unwrap();
@@ -620,10 +669,10 @@ mod tests {
 
         // Both readers see the same committed state
         assert_eq!(reader1.committed_index(), reader2.committed_index());
-        
+
         let entry1 = reader1.read(0).unwrap();
         let entry2 = reader2.read(0).unwrap();
-        
+
         assert_eq!(entry1.payload, entry2.payload);
 
         let _ = fs::remove_file(path);
@@ -640,7 +689,7 @@ mod tests {
 
         let mut reader = LogReader::open(path, committed_state).unwrap();
         let entry = reader.read(0).unwrap();
-        
+
         assert_eq!(entry.payload, b"valid_entry");
         assert_eq!(entry.index, 0);
 

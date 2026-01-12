@@ -1,3 +1,7 @@
+#![allow(clippy::redundant_pattern_matching)]
+#![allow(clippy::unwrap_or_default)]
+#![allow(clippy::collapsible_else_if)]
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,7 +14,9 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use crate::engine::log::LogWriter;
 use crate::engine::reader::CommittedState;
 use crate::vsr::client::SessionMap;
-use crate::vsr::message::{ClientRequest, ClientResponse, ClientResult, LogEntrySummary, VsrMessage};
+use crate::vsr::message::{
+    ClientRequest, ClientResponse, ClientResult, LogEntrySummary, VsrMessage,
+};
 use crate::vsr::node::{DoViewChangeInfo, NodeRole, ELECTION_TIMEOUT, HEARTBEAT_INTERVAL};
 use crate::vsr::quorum::QuorumTracker;
 
@@ -69,7 +75,11 @@ impl NodeHandle {
         }
 
         let (resp_tx, resp_rx) = bounded(1);
-        if self.command_tx.send(NodeCommand::ClientRequest(request, resp_tx)).is_ok() {
+        if self
+            .command_tx
+            .send(NodeCommand::ClientRequest(request, resp_tx))
+            .is_ok()
+        {
             resp_rx.recv_timeout(Duration::from_secs(5)).ok()
         } else {
             None
@@ -153,7 +163,10 @@ impl NodeRunner {
         let now = Instant::now();
 
         let (role, quorum_tracker) = if config.is_primary {
-            (NodeRole::Primary, Some(QuorumTracker::new(config.cluster_size, config.node_id)))
+            (
+                NodeRole::Primary,
+                Some(QuorumTracker::new(config.cluster_size, config.node_id)),
+            )
         } else {
             (NodeRole::Backup, None)
         };
@@ -189,13 +202,18 @@ impl NodeRunner {
         command_rx: Receiver<NodeCommand>,
         killed: Arc<AtomicBool>,
     ) -> std::io::Result<Self> {
-        use crate::engine::recovery::{LogRecovery, RecoveryOutcome};
+        #[allow(unused_imports)]
         use crate::engine::format::GENESIS_HASH;
+        use crate::engine::recovery::{LogRecovery, RecoveryOutcome};
 
         // Try to recover from existing log, or create new if recovery fails
         let writer = if let Some(recovery) = LogRecovery::open(&config.log_path)? {
             match recovery.scan() {
-                Ok(RecoveryOutcome::Clean { last_index, tail_hash, .. }) => {
+                Ok(RecoveryOutcome::Clean {
+                    last_index,
+                    tail_hash,
+                    ..
+                }) => {
                     LogWriter::open(
                         &config.log_path,
                         last_index + 1,
@@ -204,15 +222,17 @@ impl NodeRunner {
                         config.view,
                     )?
                 }
-                Ok(RecoveryOutcome::Truncated { last_valid_index, tail_hash, .. }) => {
-                    LogWriter::open(
-                        &config.log_path,
-                        last_valid_index + 1,
-                        last_valid_index,
-                        tail_hash,
-                        config.view,
-                    )?
-                }
+                Ok(RecoveryOutcome::Truncated {
+                    last_valid_index,
+                    tail_hash,
+                    ..
+                }) => LogWriter::open(
+                    &config.log_path,
+                    last_valid_index + 1,
+                    last_valid_index,
+                    tail_hash,
+                    config.view,
+                )?,
                 Ok(RecoveryOutcome::CleanEmpty { .. }) | Err(_) => {
                     LogWriter::create(&config.log_path, config.view)?
                 }
@@ -264,7 +284,7 @@ impl NodeRunner {
                     NodeCommand::GetState(resp_tx) => {
                         let state = NodeState {
                             node_id: self.node_id,
-                            role: self.role.clone(),
+                            role: self.role,
                             view: self.view,
                             committed_index: self.committed_state.committed_index(),
                             next_index: self.writer.next_index(),
@@ -293,7 +313,11 @@ impl NodeRunner {
         (view % self.cluster_size as u64) as u32
     }
 
-    fn handle_client_request(&mut self, request: &ClientRequest, resp_tx: Sender<ClientResponse>) -> ClientResponse {
+    fn handle_client_request(
+        &mut self,
+        request: &ClientRequest,
+        resp_tx: Sender<ClientResponse>,
+    ) -> ClientResponse {
         if self.role != NodeRole::Primary {
             let leader_hint = if self.role == NodeRole::Backup {
                 Some(self.primary_for_view(self.view))
@@ -307,13 +331,19 @@ impl NodeRunner {
             };
         }
 
-        if let Some(cached) = self.session_map.check_duplicate(request.client_id, request.sequence_number) {
+        if let Some(cached) = self
+            .session_map
+            .check_duplicate(request.client_id, request.sequence_number)
+        {
             return cached;
         }
 
         match self.submit(&request.payload) {
             Ok(log_index) => {
-                self.pending_requests.insert(log_index, (request.client_id, request.sequence_number, resp_tx));
+                self.pending_requests.insert(
+                    log_index,
+                    (request.client_id, request.sequence_number, resp_tx),
+                );
                 ClientResponse {
                     sequence_number: request.sequence_number,
                     result: ClientResult::Pending,
@@ -326,7 +356,8 @@ impl NodeRunner {
                         message: format!("Failed to append: {}", e),
                     },
                 };
-                self.session_map.record_response(request.client_id, response.clone());
+                self.session_map
+                    .record_response(request.client_id, response.clone());
                 response
             }
         }
@@ -338,7 +369,7 @@ impl NodeRunner {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as u64;
-        
+
         let index = self.writer.append(payload, 0, 0, timestamp_ns)?;
 
         if let Some(ref mut tracker) = self.quorum_tracker {
@@ -368,10 +399,16 @@ impl NodeRunner {
 
     fn handle_message(&mut self, from_node: u32, msg: VsrMessage) {
         match msg {
-            VsrMessage::Prepare { view, index, payload, commit_index, timestamp_ns } => {
+            VsrMessage::Prepare {
+                view,
+                index,
+                payload,
+                commit_index,
+                timestamp_ns,
+            } => {
                 if self.role == NodeRole::Backup && view == self.view {
                     self.last_primary_contact = Instant::now();
-                    
+
                     if let Ok(_) = self.writer.append(&payload, 0, 0, timestamp_ns) {
                         let prepare_ok = VsrMessage::PrepareOk {
                             index,
@@ -388,12 +425,19 @@ impl NodeRunner {
                     }
                 }
             }
-            VsrMessage::PrepareBatch { view, start_index, entries, commit_index, timestamp_ns } => {
+            VsrMessage::PrepareBatch {
+                view,
+                start_index: _,
+                entries,
+                commit_index,
+                timestamp_ns,
+            } => {
                 if self.role == NodeRole::Backup && view == self.view {
                     self.last_primary_contact = Instant::now();
-                    
+
                     // Append batch entries with consensus timestamp
-                    let payloads: Vec<Vec<u8>> = entries.iter().map(|e| e.payload.clone()).collect();
+                    let payloads: Vec<Vec<u8>> =
+                        entries.iter().map(|e| e.payload.clone()).collect();
                     if let Ok(last_index) = self.writer.append_batch(&payloads, timestamp_ns) {
                         // Send PrepareOk for each entry
                         for entry in &entries {
@@ -440,10 +484,29 @@ impl NodeRunner {
             VsrMessage::StartViewChange { new_view, node_id } => {
                 self.handle_start_view_change(new_view, node_id);
             }
-            VsrMessage::DoViewChange { new_view, node_id, commit_index, last_log_index, last_log_hash, log_suffix } => {
-                self.handle_do_view_change(new_view, node_id, commit_index, last_log_index, last_log_hash, log_suffix);
+            VsrMessage::DoViewChange {
+                new_view,
+                node_id,
+                commit_index,
+                last_log_index,
+                last_log_hash,
+                log_suffix,
+            } => {
+                self.handle_do_view_change(
+                    new_view,
+                    node_id,
+                    commit_index,
+                    last_log_index,
+                    last_log_hash,
+                    log_suffix,
+                );
             }
-            VsrMessage::StartView { new_view, primary_id, commit_index, .. } => {
+            VsrMessage::StartView {
+                new_view,
+                primary_id,
+                commit_index,
+                ..
+            } => {
                 self.handle_start_view(new_view, primary_id, commit_index);
             }
             VsrMessage::CatchUpRequest { .. } | VsrMessage::CatchUpResponse { .. } => {
@@ -495,7 +558,10 @@ impl NodeRunner {
             return;
         }
 
-        let votes = self.start_view_change_votes.entry(new_view).or_insert_with(HashSet::new);
+        let votes = self
+            .start_view_change_votes
+            .entry(new_view)
+            .or_insert_with(HashSet::new);
         votes.insert(from_node);
 
         if self.role == NodeRole::ViewChangeInProgress && self.proposed_view == new_view {
@@ -518,7 +584,10 @@ impl NodeRunner {
             self.proposed_view = new_view;
 
             let my_info = self.create_do_view_change_info();
-            let msgs = self.do_view_change_msgs.entry(new_view).or_insert_with(Vec::new);
+            let msgs = self
+                .do_view_change_msgs
+                .entry(new_view)
+                .or_insert_with(Vec::new);
             if !msgs.iter().any(|m| m.node_id == self.node_id) {
                 msgs.push(my_info);
             }
@@ -590,7 +659,10 @@ impl NodeRunner {
             log_suffix,
         };
 
-        let msgs = self.do_view_change_msgs.entry(new_view).or_insert_with(Vec::new);
+        let msgs = self
+            .do_view_change_msgs
+            .entry(new_view)
+            .or_insert_with(Vec::new);
         if !msgs.iter().any(|m| m.node_id == from_node) {
             msgs.push(info);
         }
@@ -674,12 +746,15 @@ impl NodeRunner {
             .collect();
 
         for log_index in committed_keys {
-            if let Some((client_id, sequence_number, resp_tx)) = self.pending_requests.remove(&log_index) {
+            if let Some((client_id, sequence_number, resp_tx)) =
+                self.pending_requests.remove(&log_index)
+            {
                 let response = ClientResponse {
                     sequence_number,
                     result: ClientResult::Success { log_index },
                 };
-                self.session_map.record_response(client_id, response.clone());
+                self.session_map
+                    .record_response(client_id, response.clone());
                 let _ = resp_tx.send(response);
             }
         }
@@ -687,10 +762,7 @@ impl NodeRunner {
 }
 
 /// Spawn a node in its own thread.
-pub fn spawn_node(
-    config: NodeConfig,
-    endpoint: ChaosEndpoint,
-) -> std::io::Result<NodeHandle> {
+pub fn spawn_node(config: NodeConfig, endpoint: ChaosEndpoint) -> std::io::Result<NodeHandle> {
     let (command_tx, command_rx) = bounded(100);
     let committed_state = Arc::new(CommittedState::new());
     let killed = Arc::new(AtomicBool::new(false));
@@ -702,7 +774,13 @@ pub fn spawn_node(
     let killed_clone = killed.clone();
 
     let thread_handle = thread::spawn(move || {
-        match NodeRunner::new(config, endpoint, committed_state_clone, command_rx, killed_clone.clone()) {
+        match NodeRunner::new(
+            config,
+            endpoint,
+            committed_state_clone,
+            command_rx,
+            killed_clone.clone(),
+        ) {
             Ok(mut runner) => {
                 runner.run();
             }
@@ -724,6 +802,7 @@ pub fn spawn_node(
 }
 
 /// Cluster manager for coordinating multiple nodes.
+#[allow(dead_code)]
 pub struct ClusterManager {
     pub nodes: Vec<NodeHandle>,
     pub network: Arc<super::network::ChaosNetwork>,
@@ -794,12 +873,18 @@ impl ClusterManager {
 
         let committed_state_clone = committed_state.clone();
         let killed_clone = killed.clone();
-        let log_path = config.log_path.clone();
+        let _log_path = config.log_path.clone();
 
         // Spawn new thread with recovery
         let thread_handle = thread::spawn(move || {
             // Recover from existing log file
-            match NodeRunner::recover(config, endpoint, committed_state_clone, command_rx, killed_clone.clone()) {
+            match NodeRunner::recover(
+                config,
+                endpoint,
+                committed_state_clone,
+                command_rx,
+                killed_clone.clone(),
+            ) {
                 Ok(mut runner) => {
                     runner.run();
                 }
@@ -823,7 +908,8 @@ impl ClusterManager {
         let start = Instant::now();
 
         while start.elapsed() < timeout {
-            let committed_indices: Vec<Option<u64>> = self.nodes
+            let committed_indices: Vec<Option<u64>> = self
+                .nodes
                 .iter()
                 .filter(|n| !n.is_killed())
                 .map(|n| n.committed_index())
@@ -835,7 +921,7 @@ impl ClusterManager {
             }
 
             let max_committed = committed_indices.iter().filter_map(|&x| x).max();
-            
+
             if let Some(max) = max_committed {
                 let all_synced = committed_indices.iter().all(|&idx| idx == Some(max));
                 if all_synced {
@@ -851,10 +937,7 @@ impl ClusterManager {
 
     /// Get states from all live nodes.
     pub fn get_all_states(&self) -> Vec<NodeState> {
-        self.nodes
-            .iter()
-            .filter_map(|n| n.get_state())
-            .collect()
+        self.nodes.iter().filter_map(|n| n.get_state()).collect()
     }
 
     /// Stop all nodes.
@@ -868,7 +951,7 @@ impl ClusterManager {
     /// Returns true if all live nodes have the same committed index.
     pub fn verify_consistency(&self) -> ConsistencyResult {
         let states = self.get_all_states();
-        
+
         if states.is_empty() {
             return ConsistencyResult {
                 consistent: false,
@@ -884,7 +967,7 @@ impl ClusterManager {
             .collect();
 
         let max_committed = committed_indices.iter().filter_map(|(_, idx)| *idx).max();
-        
+
         let all_same = if let Some(max) = max_committed {
             committed_indices.iter().all(|(_, idx)| *idx == Some(max))
         } else {

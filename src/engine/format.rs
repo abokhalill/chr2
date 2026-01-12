@@ -28,8 +28,14 @@ pub fn create_sentinel(last_index: u64) -> [u8; SENTINEL_SIZE] {
 pub fn verify_sentinel(sentinel: &[u8; SENTINEL_SIZE], expected_last_index: u64) -> bool {
     if sentinel[0..4] == SENTINEL_MAGIC {
         let stored_index = u64::from_le_bytes([
-            sentinel[8], sentinel[9], sentinel[10], sentinel[11],
-            sentinel[12], sentinel[13], sentinel[14], sentinel[15],
+            sentinel[8],
+            sentinel[9],
+            sentinel[10],
+            sentinel[11],
+            sentinel[12],
+            sentinel[13],
+            sentinel[14],
+            sentinel[15],
         ]);
         return stored_index == expected_last_index;
     }
@@ -138,22 +144,18 @@ impl LogHeader {
         header.header_checksum = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         header.payload_size = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         header.index = u64::from_le_bytes([
-            bytes[8], bytes[9], bytes[10], bytes[11],
-            bytes[12], bytes[13], bytes[14], bytes[15],
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
         ]);
         header.view_id = u64::from_le_bytes([
-            bytes[16], bytes[17], bytes[18], bytes[19],
-            bytes[20], bytes[21], bytes[22], bytes[23],
+            bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
         ]);
         header.stream_id = u64::from_le_bytes([
-            bytes[24], bytes[25], bytes[26], bytes[27],
-            bytes[28], bytes[29], bytes[30], bytes[31],
+            bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31],
         ]);
         header.prev_hash.copy_from_slice(&bytes[32..48]);
         header.payload_hash.copy_from_slice(&bytes[48..64]);
         header.timestamp_ns = u64::from_le_bytes([
-            bytes[64], bytes[65], bytes[66], bytes[67],
-            bytes[68], bytes[69], bytes[70], bytes[71],
+            bytes[64], bytes[65], bytes[66], bytes[67], bytes[68], bytes[69], bytes[70], bytes[71],
         ]);
         header.flags = u16::from_le_bytes([bytes[72], bytes[73]]);
         header.schema_version = u16::from_le_bytes([bytes[74], bytes[75]]);
@@ -163,7 +165,9 @@ impl LogHeader {
     }
 
     #[allow(dead_code)]
-    pub fn is_zero(&self) -> bool { self.as_bytes().iter().all(|&b| b == 0) }
+    pub fn is_zero(&self) -> bool {
+        self.as_bytes().iter().all(|&b| b == 0)
+    }
 }
 
 pub fn compute_payload_hash(payload: &[u8]) -> [u8; 16] {
@@ -185,7 +189,9 @@ pub fn compute_chain_hash(header: &LogHeader, payload: &[u8]) -> [u8; 16] {
     truncated
 }
 
-pub fn calculate_padding(payload_size: u32) -> usize { (8 - (payload_size as usize % 8)) % 8 }
+pub fn calculate_padding(payload_size: u32) -> usize {
+    (8 - (payload_size as usize % 8)) % 8
+}
 
 pub const LOG_METADATA_SIZE: usize = 64;
 pub const LOG_MAGIC: [u8; 4] = [0x50, 0x4C, 0x4F, 0x47];
@@ -228,12 +234,16 @@ impl LogMetadata {
 
     pub fn compute_checksum(&self) -> u32 {
         let bytes = self.as_bytes();
-        let mut hasher = crc32c::crc32c(&bytes[0..32]);
+        let hasher = crc32c::crc32c(&bytes[0..32]);
         crc32c::crc32c_append(hasher, &bytes[36..64])
     }
 
-    pub fn verify_checksum(&self) -> bool { self.checksum == self.compute_checksum() }
-    pub fn verify_magic(&self) -> bool { self.magic == LOG_MAGIC }
+    pub fn verify_checksum(&self) -> bool {
+        self.checksum == self.compute_checksum()
+    }
+    pub fn verify_magic(&self) -> bool {
+        self.magic == LOG_MAGIC
+    }
 
     pub fn as_bytes(&self) -> [u8; LOG_METADATA_SIZE] {
         let mut bytes = [0u8; LOG_METADATA_SIZE];
@@ -252,8 +262,7 @@ impl LogMetadata {
         let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
 
         let base_index = u64::from_le_bytes([
-            bytes[8], bytes[9], bytes[10], bytes[11],
-            bytes[12], bytes[13], bytes[14], bytes[15],
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
         ]);
 
         let mut base_prev_hash = [0u8; 16];
@@ -297,26 +306,17 @@ mod tests {
     fn test_checksum_roundtrip() {
         let payload = b"test payload";
         let timestamp_ns = 1_000_000_000u64; // 1 second since epoch
-        let header = LogHeader::new(
-            0,
-            1,
-            0,
-            GENESIS_HASH,
-            payload,
-            timestamp_ns,
-            0,
-            1,
-        );
+        let header = LogHeader::new(0, 1, 0, GENESIS_HASH, payload, timestamp_ns, 0, 1);
         assert!(header.verify_checksum());
         assert_eq!(header.timestamp_ns, timestamp_ns);
     }
-    
+
     #[test]
     fn test_sentinel_v2_size() {
         // ENFORCES F7: Sentinel must be 16 bytes for full u64 index
         assert_eq!(SENTINEL_SIZE, 16);
     }
-    
+
     #[test]
     fn test_sentinel_v2_roundtrip() {
         // ENFORCES F7: Sentinel stores full u64 index without truncation
@@ -324,19 +324,19 @@ mod tests {
         assert!(verify_sentinel(&sentinel, 12345));
         assert!(!verify_sentinel(&sentinel, 12346));
     }
-    
+
     #[test]
     fn test_sentinel_v2_large_index() {
         // ENFORCES F7: Sentinel handles indices > u32::MAX
         let large_index: u64 = (u32::MAX as u64) + 1000;
         let sentinel = create_sentinel(large_index);
         assert!(verify_sentinel(&sentinel, large_index));
-        
+
         // Verify it doesn't match truncated value
         let truncated = large_index as u32 as u64;
         assert!(!verify_sentinel(&sentinel, truncated));
     }
-    
+
     #[test]
     fn test_sentinel_v2_max_index() {
         // ENFORCES F7: Sentinel handles u64::MAX - 1 (max valid index)
@@ -344,7 +344,7 @@ mod tests {
         let sentinel = create_sentinel(max_index);
         assert!(verify_sentinel(&sentinel, max_index));
     }
-    
+
     #[test]
     fn test_sentinel_magic_detection() {
         // Test is_sentinel_magic for v1 and v2

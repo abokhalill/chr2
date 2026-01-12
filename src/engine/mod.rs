@@ -1,3 +1,8 @@
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::suspicious_open_options)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::collapsible_if)]
+
 pub mod commit_index;
 pub mod disk;
 pub mod durability;

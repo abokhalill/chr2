@@ -109,7 +109,7 @@ pub struct PendingRequest {
 /// - Leader discovery and caching
 /// - Automatic retry on NotThePrimary
 /// - Exponential backoff for timeouts
-pub struct chrClient {
+pub struct ChrClient {
     /// Unique client identifier.
     pub client_id: u64,
     /// Next sequence number to use.
@@ -124,10 +124,10 @@ pub struct chrClient {
     base_timeout: Duration,
 }
 
-impl chrClient {
+impl ChrClient {
     /// Create a new client.
     pub fn new(client_id: u64, cluster_nodes: Vec<u32>) -> Self {
-        chrClient {
+        ChrClient {
             client_id,
             next_sequence: 1,
             last_known_leader: None,
@@ -206,7 +206,7 @@ impl chrClient {
     pub fn max_retries(&self) -> u32 {
         self.max_retries
     }
-    
+
     /// Check if an error response indicates system overload.
     /// Returns true if the error message contains "System Overloaded".
     pub fn is_overload_error(response: &ClientResponse) -> bool {
@@ -215,7 +215,7 @@ impl chrClient {
             _ => false,
         }
     }
-    
+
     /// Calculate backoff duration for overload errors.
     /// Uses more aggressive backoff than regular retries to allow system recovery.
     pub fn overload_backoff_duration(&self, attempt: u32) -> Duration {
@@ -224,7 +224,7 @@ impl chrClient {
         let multiplier = 2u64.pow(attempt.min(5));
         Duration::from_millis(base_ms * multiplier)
     }
-    
+
     /// Handle an overload error response.
     /// Returns the recommended wait duration before retrying.
     pub fn handle_overload(&self, attempt: u32) -> Duration {
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_chr_client_sequence_numbers() {
-        let mut client = chrClient::new(42, vec![0, 1, 2]);
+        let mut client = ChrClient::new(42, vec![0, 1, 2]);
 
         let req1 = client.create_request(b"test1".to_vec());
         assert_eq!(req1.client_id, 42);
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_chr_client_leader_redirect() {
-        let mut client = chrClient::new(1, vec![0, 1, 2]);
+        let mut client = ChrClient::new(1, vec![0, 1, 2]);
 
         // Initially no leader known
         assert_eq!(client.target_node(), 0);
