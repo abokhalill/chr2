@@ -475,9 +475,11 @@ impl NodeRunner {
             VsrMessage::Commit { view, commit_index } => {
                 if self.role == NodeRole::Backup && view == self.view {
                     self.last_primary_contact = Instant::now();
-                    let current = self.committed_state.committed_index();
-                    if current.map(|c| commit_index > c).unwrap_or(true) {
-                        self.committed_state.advance(commit_index);
+                    if let Some(primary_commit) = commit_index {
+                        let current = self.committed_state.committed_index();
+                        if current.map_or(true, |c| primary_commit > c) {
+                            self.committed_state.advance(primary_commit);
+                        }
                     }
                 }
             }
@@ -519,10 +521,9 @@ impl NodeRunner {
         match self.role {
             NodeRole::Primary => {
                 if self.last_sent.elapsed() >= HEARTBEAT_INTERVAL {
-                    let commit_index = self.committed_state.committed_index().unwrap_or(0);
                     let heartbeat = VsrMessage::Commit {
                         view: self.view,
-                        commit_index,
+                        commit_index: self.committed_state.committed_index(),
                     };
                     self.endpoint.broadcast(heartbeat);
                     self.last_sent = Instant::now();

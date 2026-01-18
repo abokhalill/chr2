@@ -12,8 +12,8 @@ Deterministic execution kernel with crash-safe replication and exactly-once side
 |----------|-----------|
 | Durability | Quorum writes survive f failures in 2f+1 cluster |
 | Consistency | Linearizable via VSR consensus |
-| Exactly-once | Durable outbox with fenced execution |
-| Determinism | Hash-chained log, consensus timestamps |
+| Exactly-once | Durable outbox with epoch-fenced execution |
+| Determinism | Hash-chained log, BTreeMap iteration, consensus timestamps |
 
 ## Architecture
 
@@ -24,12 +24,21 @@ Deterministic execution kernel with crash-safe replication and exactly-once side
 │  VsrNode ──> Executor ──> ChrApplication                     │
 │     │           │              │                             │
 │     ▼           ▼              ▼                             │
-│  VirtualDisk  Snapshots    Outbox                            │
-│  (barrier)   (compaction)  (side effects)                    │
+│  Manifest    Snapshots    Outbox (BTreeMap)                  │
+│  (fencing)  (compaction)  (deterministic order)              │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Control plane (heartbeats, elections) is decoupled from data plane (writes, durability). Disk stalls don't trigger elections.
+Control plane (heartbeats, elections) decoupled from data plane (writes, durability). Disk stalls don't trigger elections.
+
+## Core Types
+
+| Type | Purpose |
+|------|---------|
+| `LogIndex` | Strongly-typed log position. Not `u64`. |
+| `ViewId` | Consensus term. Monotonic across elections. |
+| `CommitState` | `Empty` vs `At(LogIndex)`. None ≠ 0. |
+| `DurableEpoch` | Fencing token from `Manifest.highest_view`. |
 
 ## Components
 
@@ -42,7 +51,7 @@ Control plane (heartbeats, elections) is decoupled from data plane (writes, dura
 | `IoUringDisk` | io_uring + O_DIRECT. Explicit fsync barrier |
 | `LogWriter` | Single-writer append-only log with hash chain |
 | `DurabilityWorker` | Background thread, accepts `Box<dyn VirtualDisk>` |
-| `CommitIndex` | Type-safe commit tracking. Distinguishes `None` from `At(0)` |
+| `CommittedState` | Atomic commit tracking. `CommitState` API. |
 
 ### `vsr/`
 
@@ -51,6 +60,7 @@ Control plane (heartbeats, elections) is decoupled from data plane (writes, dura
 | `VsrNode` | VSR primary/backup with view changes |
 | `QuorumTracker` | Per-index ack tracking for commit advancement |
 | `Manifest` | Durable view/vote state. Fences zombie leaders |
+| `ReplicatedSessionMap` | Exactly-once client dedupe. Survives failover. |
 
 ### `kernel/`
 
@@ -58,12 +68,13 @@ Control plane (heartbeats, elections) is decoupled from data plane (writes, dura
 |--------|---------|
 | `Executor` | Deterministic state machine driver |
 | `VsrAuthority` | Durable fencing for side effect execution |
-| `SideEffectManager` | Executes outbox under Primary authority |
+| `SideEffectManager` | Epoch-fenced outbox execution. `lease == durable` or die. |
+| `Outbox` | BTreeMap. Deterministic iteration across replicas. |
 | `ChrApplication` | Your application trait |
 
 ### `chaos/`
 
-Jepsen-style testing: partitions, kills, clock skew.
+Jepsen-grade testing: partitions, kills, clock skew. 145 tests. All pass.
 
 ## Usage
 

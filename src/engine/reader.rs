@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use crate::types::{CommitState, LogIndex};
 use crate::engine::format::{
     compute_chain_hash, compute_payload_hash, frame_size, LogHeader, LogMetadata, HEADER_SIZE,
     LOG_METADATA_SIZE,
@@ -97,48 +98,78 @@ impl std::fmt::Display for ReadError {
 
 impl std::error::Error for ReadError {}
 
-/// Visibility bridge enforcing the commit contract.
-/// Writers: Release store. Readers: Acquire load. u64::MAX = no commits.
+/// Visibility bridge: Writers Release-store, Readers Acquire-load.
+/// u64::MAX = Empty, otherwise At(n). Exposes type-safe CommitState API.
 pub struct CommittedState {
     committed_index: AtomicU64,
 }
 
+const NO_COMMITS_SENTINEL: u64 = u64::MAX;
+
 impl CommittedState {
     pub fn new() -> Self {
-        CommittedState {
-            committed_index: AtomicU64::new(u64::MAX),
-        }
+        CommittedState { committed_index: AtomicU64::new(NO_COMMITS_SENTINEL) }
     }
 
     #[allow(dead_code)]
-    pub fn from_recovered(last_index: u64) -> Self {
-        CommittedState {
-            committed_index: AtomicU64::new(last_index),
-        }
+    pub fn from_recovered(last_index: Option<u64>) -> Self {
+        let value = last_index.unwrap_or(NO_COMMITS_SENTINEL);
+        CommittedState { committed_index: AtomicU64::new(value) }
     }
 
-    /// Acquire load. Returns None if no entries committed.
+    #[inline]
+    pub fn commit_state(&self) -> CommitState {
+        let idx = self.committed_index.load(Ordering::Acquire);
+        if idx == NO_COMMITS_SENTINEL { CommitState::Empty }
+        else { CommitState::At(LogIndex(idx)) }
+    }
+
     #[inline]
     pub fn committed_index(&self) -> Option<u64> {
         let idx = self.committed_index.load(Ordering::Acquire);
-        if idx == u64::MAX {
-            None
-        } else {
-            Some(idx)
+        if idx == NO_COMMITS_SENTINEL { None } else { Some(idx) }
+    }
+
+    /// CAS loop enforcing monotonic advance.
+    pub fn try_advance(&self, new_state: CommitState) -> Result<(), crate::types::CommitAdvanceError> {
+        let new_value = match new_state {
+            CommitState::Empty => {
+                return Err(crate::types::CommitAdvanceError::Regression {
+                    current: self.committed_index.load(Ordering::Acquire),
+                    attempted: NO_COMMITS_SENTINEL,
+                });
+            }
+            CommitState::At(idx) => idx.get(),
+        };
+
+        loop {
+            let current = self.committed_index.load(Ordering::Acquire);
+            if current != NO_COMMITS_SENTINEL && new_value <= current {
+                if new_value == current { return Ok(()); }
+                return Err(crate::types::CommitAdvanceError::Regression { current, attempted: new_value });
+            }
+            match self.committed_index.compare_exchange(current, new_value, Ordering::Release, Ordering::Acquire) {
+                Ok(_) => return Ok(()),
+                Err(_) => continue,
+            }
         }
     }
 
-    /// Release store. Called ONLY after fdatasync success.
     #[inline]
     pub fn advance(&self, new_index: u64) {
+        #[cfg(debug_assertions)]
+        {
+            let current = self.committed_index.load(Ordering::Acquire);
+            if current != NO_COMMITS_SENTINEL && new_index < current {
+                panic!("Commit regression: {}→{}", current, new_index);
+            }
+        }
         self.committed_index.store(new_index, Ordering::Release);
     }
 }
 
 impl Default for CommittedState {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 /// Read-only log reader. Multiple instances allowed. Never observes uncommitted entries.

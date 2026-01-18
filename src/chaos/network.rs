@@ -432,10 +432,9 @@ mod tests {
         let ep0 = network.create_endpoint(0).unwrap();
         let ep1 = network.create_endpoint(1).unwrap();
 
-        // Send a message
         let msg = VsrMessage::Commit {
             view: 0,
-            commit_index: 0,
+            commit_index: Some(0),
         };
         assert!(ep0.send_to(1, msg));
 
@@ -456,10 +455,9 @@ mod tests {
         // Partition nodes 0 and 1
         network.partition(0, 1);
 
-        // Send should fail due to partition
         let msg = VsrMessage::Commit {
             view: 0,
-            commit_index: 0,
+            commit_index: Some(0),
         };
         assert!(!ep0.send_to(1, msg.clone()));
 
@@ -483,10 +481,9 @@ mod tests {
         // Kill node 0
         network.kill_node(0);
 
-        // Node 0 should not be able to send or receive
         let msg = VsrMessage::Commit {
             view: 0,
-            commit_index: 0,
+            commit_index: Some(0),
         };
         assert!(!ep0.send_to(1, msg.clone()));
         assert!(ep0.try_recv().is_none());

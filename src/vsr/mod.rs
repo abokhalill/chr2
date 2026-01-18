@@ -9,6 +9,7 @@ pub mod message;
 pub mod network;
 pub mod node;
 pub mod quorum;
+pub mod session;
 
 #[cfg(test)]
 mod tests;
@@ -19,3 +20,4 @@ pub use message::{ClientRequest, ClientResponse, ClientResult, LogEntrySummary, 
 pub use network::MockNetwork;
 pub use node::{DoViewChangeInfo, NodeRole, VsrNode, ELECTION_TIMEOUT, HEARTBEAT_INTERVAL};
 pub use quorum::QuorumTracker;
+pub use session::{ReplicatedSessionMap, SessionCheckResult, SessionConfig};

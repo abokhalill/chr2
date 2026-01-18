@@ -2061,7 +2061,7 @@ fn test_heartbeat_decoupled_from_flush() {
     if let Some((from, VsrMessage::Commit { view, commit_index })) = msg {
         assert_eq!(from, 0);
         assert_eq!(view, 1);
-        assert_eq!(commit_index, 0); // No commits yet
+        assert_eq!(commit_index, None);
     } else {
         panic!("Expected Commit (heartbeat) message");
     }

@@ -1094,9 +1094,10 @@ impl<A: ChrApplication> VsrNode<A> {
                     self.apply_committed_entries(current_committed, committable);
 
                     // Broadcast commit notification to backups
+                    // WORKSTREAM 1: commit_index is now Option<u64>
                     let commit_msg = VsrMessage::Commit {
                         view: self.view,
-                        commit_index: committable,
+                        commit_index: Some(committable),
                     };
                     self.network.broadcast(commit_msg);
                     self.last_sent = Instant::now();
@@ -1666,13 +1667,14 @@ impl<A: ChrApplication> VsrNode<A> {
                 }
                 VsrMessage::Commit { view, commit_index } => {
                     if self.role == NodeRole::Backup && view == self.view {
-                        // Reset election timeout - we heard from the Primary
                         self.last_primary_contact = Instant::now();
-
-                        let current = self.committed_state.committed_index();
-                        if current.map(|c| commit_index > c).unwrap_or(true) {
-                            self.committed_state.advance(commit_index);
-                            self.apply_committed_entries(current, commit_index);
+                        if let Some(primary_commit) = commit_index {
+                            let current = self.committed_state.committed_index();
+                            let should_advance = current.map_or(true, |c| primary_commit > c);
+                            if should_advance {
+                                self.committed_state.advance(primary_commit);
+                                self.apply_committed_entries(current, primary_commit);
+                            }
                         }
                     }
                 }
@@ -1875,12 +1877,10 @@ impl<A: ChrApplication> VsrNode<A> {
         }
     }
 
-    /// Send a heartbeat (Commit message) to all backups.
     fn send_heartbeat(&mut self) {
-        let commit_index = self.committed_state.committed_index().unwrap_or(0);
         let heartbeat = VsrMessage::Commit {
             view: self.view,
-            commit_index,
+            commit_index: self.committed_state.committed_index(),
         };
         self.network.broadcast(heartbeat);
         self.last_sent = Instant::now();

@@ -63,16 +63,10 @@ pub enum VsrMessage {
         node_id: u32,
     },
 
-    /// Commit notification / Heartbeat message.
-    ///
-    /// Sent by Primary to Backups either:
-    /// - After quorum is reached (commit notification)
-    /// - Periodically when idle (heartbeat to prevent election timeout)
+    /// Commit notification / Heartbeat. None = no commits (not index 0).
     Commit {
-        /// View number.
         view: u64,
-        /// New committed index.
-        commit_index: u64,
+        commit_index: Option<u64>,
     },
 
     /// StartViewChange message broadcast when a node suspects leader failure.

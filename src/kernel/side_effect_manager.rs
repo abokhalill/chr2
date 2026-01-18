@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::kernel::traits::{EffectId, Outbox, SideEffect};
+use crate::types::DurableEpoch;
 
 #[derive(Debug, Clone)]
 pub enum EffectExecutionError {
@@ -123,18 +124,22 @@ impl InFlightTracker {
     }
 }
 
+/// Side effect manager with epoch-based fencing tied to Manifest.highest_view.
+/// lease_epoch must equal durable_epoch to execute effects.
 pub struct SideEffectManager {
     config: SideEffectManagerConfig,
     in_flight: Arc<Mutex<InFlightTracker>>,
     is_primary: Arc<AtomicBool>,
-    fence_token: Arc<AtomicU64>,
-    lease_token: Arc<AtomicU64>,
+    durable_epoch: Arc<AtomicU64>,
+    lease_epoch: Arc<AtomicU64>,
     executor: Arc<EffectExecutor>,
     submitter: Arc<AcknowledgeSubmitter>,
     running: Arc<AtomicBool>,
     effects_executed: Arc<std::sync::atomic::AtomicU64>,
     acks_submitted: Arc<std::sync::atomic::AtomicU64>,
 }
+
+const INVALID_LEASE: u64 = u64::MAX;
 
 impl SideEffectManager {
     pub fn new(
@@ -146,8 +151,8 @@ impl SideEffectManager {
             config,
             in_flight: Arc::new(Mutex::new(InFlightTracker::new())),
             is_primary: Arc::new(AtomicBool::new(false)),
-            fence_token: Arc::new(AtomicU64::new(0)),
-            lease_token: Arc::new(AtomicU64::new(u64::MAX)),
+            durable_epoch: Arc::new(AtomicU64::new(0)),
+            lease_epoch: Arc::new(AtomicU64::new(INVALID_LEASE)),
             executor: Arc::new(executor),
             submitter: Arc::new(submitter),
             running: Arc::new(AtomicBool::new(false)),
@@ -156,14 +161,34 @@ impl SideEffectManager {
         }
     }
 
-    pub fn advance_fence(&self, token: u64) {
-        let mut cur = self.fence_token.load(Ordering::SeqCst);
-        while token > cur {
-            match self
-                .fence_token
-                .compare_exchange(cur, token, Ordering::SeqCst, Ordering::SeqCst)
-            {
+    /// Use when recovering from Manifest.
+    pub fn with_durable_epoch(
+        config: SideEffectManagerConfig,
+        executor: EffectExecutor,
+        submitter: AcknowledgeSubmitter,
+        initial_epoch: DurableEpoch,
+    ) -> Self {
+        SideEffectManager {
+            config,
+            in_flight: Arc::new(Mutex::new(InFlightTracker::new())),
+            is_primary: Arc::new(AtomicBool::new(false)),
+            durable_epoch: Arc::new(AtomicU64::new(initial_epoch.get())),
+            lease_epoch: Arc::new(AtomicU64::new(INVALID_LEASE)),
+            executor: Arc::new(executor),
+            submitter: Arc::new(submitter),
+            running: Arc::new(AtomicBool::new(false)),
+            effects_executed: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            acks_submitted: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
+    }
+
+    /// Advance epoch, invalidating any outstanding lease.
+    pub fn advance_durable_epoch(&self, new_epoch: DurableEpoch) {
+        let mut cur = self.durable_epoch.load(Ordering::SeqCst);
+        while new_epoch.get() > cur {
+            match self.durable_epoch.compare_exchange(cur, new_epoch.get(), Ordering::SeqCst, Ordering::SeqCst) {
                 Ok(_) => {
+                    self.lease_epoch.store(INVALID_LEASE, Ordering::SeqCst);
                     if let Ok(mut tracker) = self.in_flight.lock() {
                         *tracker = InFlightTracker::new();
                     }
@@ -174,46 +199,55 @@ impl SideEffectManager {
         }
     }
 
-    pub fn set_primary_with_token(&self, is_primary: bool, token: u64) {
-        self.advance_fence(token);
+    #[deprecated(note = "Use advance_durable_epoch instead")]
+    pub fn advance_fence(&self, token: u64) {
+        self.advance_durable_epoch(DurableEpoch(token));
+    }
+
+    pub fn set_primary_with_epoch(&self, is_primary: bool, epoch: DurableEpoch) {
+        self.advance_durable_epoch(epoch);
         self.is_primary.store(is_primary, Ordering::SeqCst);
         if is_primary {
-            self.lease_token.store(token, Ordering::SeqCst);
+            self.lease_epoch.store(epoch.get(), Ordering::SeqCst);
         } else {
-            self.lease_token.store(u64::MAX, Ordering::SeqCst);
-        }
-
-        if !is_primary {
+            self.lease_epoch.store(INVALID_LEASE, Ordering::SeqCst);
             if let Ok(mut tracker) = self.in_flight.lock() {
                 *tracker = InFlightTracker::new();
             }
         }
     }
 
+    pub fn set_primary_with_token(&self, is_primary: bool, token: u64) {
+        self.set_primary_with_epoch(is_primary, DurableEpoch(token));
+    }
+
     pub fn set_primary(&self, is_primary: bool) {
-        let token = self.fence_token.load(Ordering::SeqCst);
-        self.set_primary_with_token(is_primary, token);
+        let epoch = DurableEpoch(self.durable_epoch.load(Ordering::SeqCst));
+        self.set_primary_with_epoch(is_primary, epoch);
     }
 
+    /// True iff is_primary AND lease_epoch == durable_epoch.
     pub fn is_primary(&self) -> bool {
-        if !self.is_primary.load(Ordering::SeqCst) {
-            return false;
-        }
-        let fence = self.fence_token.load(Ordering::SeqCst);
-        let lease = self.lease_token.load(Ordering::SeqCst);
-        lease == fence
+        if !self.is_primary.load(Ordering::SeqCst) { return false; }
+        self.lease_epoch.load(Ordering::SeqCst) == self.durable_epoch.load(Ordering::SeqCst)
     }
 
-    pub fn process_pending(&self, outbox: &Outbox) -> usize {
-        if !self.is_primary() {
-            return 0;
-        }
+    pub fn durable_epoch(&self) -> DurableEpoch {
+        DurableEpoch(self.durable_epoch.load(Ordering::SeqCst))
+    }
 
-        let fence_snapshot = self.fence_token.load(Ordering::SeqCst);
-        let lease_snapshot = self.lease_token.load(Ordering::SeqCst);
-        if lease_snapshot != fence_snapshot {
-            return 0;
-        }
+    pub fn lease_epoch(&self) -> Option<DurableEpoch> {
+        let lease = self.lease_epoch.load(Ordering::SeqCst);
+        if lease == INVALID_LEASE { None } else { Some(DurableEpoch(lease)) }
+    }
+
+    /// Process pending effects in deterministic order. Checks epoch before/after execution.
+    pub fn process_pending(&self, outbox: &Outbox) -> usize {
+        if !self.is_primary() { return 0; }
+
+        let durable_snapshot = self.durable_epoch.load(Ordering::SeqCst);
+        let lease_snapshot = self.lease_epoch.load(Ordering::SeqCst);
+        if lease_snapshot != durable_snapshot { return 0; }
 
         let pending = outbox.pending_effects();
         let mut processed = 0;
@@ -225,15 +259,9 @@ impl SideEffectManager {
         tracker.clear_timed_out(self.config.execution_timeout);
 
         for (effect_id, entry) in pending.iter().take(self.config.max_effects_per_cycle) {
-            if !self.is_primary.load(Ordering::SeqCst) {
-                break;
-            }
-            if self.fence_token.load(Ordering::SeqCst) != fence_snapshot {
-                break;
-            }
-            if self.lease_token.load(Ordering::SeqCst) != lease_snapshot {
-                break;
-            }
+            if !self.is_primary.load(Ordering::SeqCst) { break; }
+            if self.durable_epoch.load(Ordering::SeqCst) != durable_snapshot { break; }
+            if self.lease_epoch.load(Ordering::SeqCst) != lease_snapshot { break; }
 
             if tracker.is_in_flight(effect_id) {
                 continue;
@@ -244,13 +272,11 @@ impl SideEffectManager {
             drop(tracker);
 
             let result = (self.executor)(effect_id, &entry.effect);
-
             if result.is_ok() {
                 self.effects_executed.fetch_add(1, Ordering::Relaxed);
-
                 if self.is_primary.load(Ordering::SeqCst)
-                    && self.fence_token.load(Ordering::SeqCst) == fence_snapshot
-                    && self.lease_token.load(Ordering::SeqCst) == lease_snapshot
+                    && self.durable_epoch.load(Ordering::SeqCst) == durable_snapshot
+                    && self.lease_epoch.load(Ordering::SeqCst) == lease_snapshot
                 {
                     if (self.submitter)(*effect_id).is_ok() {
                         self.acks_submitted.fetch_add(1, Ordering::Relaxed);

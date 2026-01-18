@@ -309,9 +309,11 @@ impl ChaosNode {
                 VsrMessage::Commit { view, commit_index } => {
                     if self.role == NodeRole::Backup && view == self.view {
                         self.last_primary_contact = Instant::now();
-                        let current = self.committed_state.committed_index();
-                        if current.map(|c| commit_index > c).unwrap_or(true) {
-                            self.committed_state.advance(commit_index);
+                        if let Some(primary_commit) = commit_index {
+                            let current = self.committed_state.committed_index();
+                            if current.map_or(true, |c| primary_commit > c) {
+                                self.committed_state.advance(primary_commit);
+                            }
                         }
                     }
                 }
@@ -365,10 +367,9 @@ impl ChaosNode {
         match self.role {
             NodeRole::Primary => {
                 if self.last_sent.elapsed() >= HEARTBEAT_INTERVAL {
-                    let commit_index = self.committed_state.committed_index().unwrap_or(0);
                     let heartbeat = VsrMessage::Commit {
                         view: self.view,
-                        commit_index,
+                        commit_index: self.committed_state.committed_index(),
                     };
                     self.endpoint.broadcast(heartbeat);
                     self.last_sent = Instant::now();
@@ -833,10 +834,9 @@ fn test_chaos_network_message_delivery() {
     let ep0 = network.create_endpoint(0).unwrap();
     let ep1 = network.create_endpoint(1).unwrap();
 
-    // Send a message from node 0 to node 1
     let msg = crate::vsr::message::VsrMessage::Commit {
         view: 0,
-        commit_index: 42,
+        commit_index: Some(42),
     };
 
     assert!(ep0.send_to(1, msg));
@@ -853,7 +853,7 @@ fn test_chaos_network_message_delivery() {
     assert!(matches!(
         msg,
         crate::vsr::message::VsrMessage::Commit {
-            commit_index: 42,
+            commit_index: Some(42),
             ..
         }
     ));
