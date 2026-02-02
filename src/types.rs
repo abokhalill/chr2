@@ -7,29 +7,45 @@ pub struct LogIndex(pub u64);
 
 impl LogIndex {
     #[inline]
-    pub const fn new(index: u64) -> Self { LogIndex(index) }
+    pub const fn new(index: u64) -> Self {
+        LogIndex(index)
+    }
     #[inline]
-    pub const fn get(self) -> u64 { self.0 }
+    pub const fn get(self) -> u64 {
+        self.0
+    }
     #[inline]
-    pub const fn next(self) -> Self { LogIndex(self.0 + 1) }
+    pub const fn next(self) -> Self {
+        LogIndex(self.0 + 1)
+    }
     #[inline]
-    pub const fn saturating_sub(self, rhs: u64) -> Self { LogIndex(self.0.saturating_sub(rhs)) }
+    pub const fn saturating_sub(self, rhs: u64) -> Self {
+        LogIndex(self.0.saturating_sub(rhs))
+    }
     #[inline]
-    pub const fn is_before(self, other: Self) -> bool { self.0 < other.0 }
+    pub const fn is_before(self, other: Self) -> bool {
+        self.0 < other.0
+    }
 }
 
 impl fmt::Display for LogIndex {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "LogIndex({})", self.0) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "LogIndex({})", self.0)
+    }
 }
 
 impl From<u64> for LogIndex {
     #[inline]
-    fn from(v: u64) -> Self { LogIndex(v) }
+    fn from(v: u64) -> Self {
+        LogIndex(v)
+    }
 }
 
 impl From<LogIndex> for u64 {
     #[inline]
-    fn from(idx: LogIndex) -> Self { idx.0 }
+    fn from(idx: LogIndex) -> Self {
+        idx.0
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -38,27 +54,41 @@ pub struct ViewId(pub u64);
 
 impl ViewId {
     #[inline]
-    pub const fn new(view: u64) -> Self { ViewId(view) }
+    pub const fn new(view: u64) -> Self {
+        ViewId(view)
+    }
     #[inline]
-    pub const fn get(self) -> u64 { self.0 }
+    pub const fn get(self) -> u64 {
+        self.0
+    }
     #[inline]
-    pub const fn next(self) -> Self { ViewId(self.0 + 1) }
+    pub const fn next(self) -> Self {
+        ViewId(self.0 + 1)
+    }
     #[inline]
-    pub const fn is_stale(self, fence: Self) -> bool { self.0 < fence.0 }
+    pub const fn is_stale(self, fence: Self) -> bool {
+        self.0 < fence.0
+    }
 }
 
 impl fmt::Display for ViewId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "ViewId({})", self.0) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ViewId({})", self.0)
+    }
 }
 
 impl From<u64> for ViewId {
     #[inline]
-    fn from(v: u64) -> Self { ViewId(v) }
+    fn from(v: u64) -> Self {
+        ViewId(v)
+    }
 }
 
 impl From<ViewId> for u64 {
     #[inline]
-    fn from(view: ViewId) -> Self { view.0 }
+    fn from(view: ViewId) -> Self {
+        view.0
+    }
 }
 
 /// Empty != At(0). Fixes "None is not 0" bugs.
@@ -71,9 +101,13 @@ pub enum CommitState {
 
 impl CommitState {
     #[inline]
-    pub const fn empty() -> Self { CommitState::Empty }
+    pub const fn empty() -> Self {
+        CommitState::Empty
+    }
     #[inline]
-    pub const fn at(index: LogIndex) -> Self { CommitState::At(index) }
+    pub const fn at(index: LogIndex) -> Self {
+        CommitState::At(index)
+    }
     #[inline]
     pub const fn index(&self) -> Option<LogIndex> {
         match self {
@@ -82,7 +116,9 @@ impl CommitState {
         }
     }
     #[inline]
-    pub const fn has_commits(&self) -> bool { matches!(self, CommitState::At(_)) }
+    pub const fn has_commits(&self) -> bool {
+        matches!(self, CommitState::At(_))
+    }
     #[inline]
     pub const fn is_committed(&self, index: LogIndex) -> bool {
         match self {
@@ -100,7 +136,10 @@ impl CommitState {
                 } else if new_index.0 == current.0 {
                     Ok(self)
                 } else {
-                    Err(CommitAdvanceError::Regression { current: current.0, attempted: new_index.0 })
+                    Err(CommitAdvanceError::Regression {
+                        current: current.0,
+                        attempted: new_index.0,
+                    })
                 }
             }
         }
@@ -113,8 +152,11 @@ impl CommitState {
             (CommitState::Empty, CommitState::At(idx)) => (CommitState::At(idx), true),
             (CommitState::At(idx), CommitState::Empty) => (CommitState::At(idx), false),
             (CommitState::At(local), CommitState::At(remote_idx)) => {
-                if remote_idx.0 > local.0 { (CommitState::At(remote_idx), true) }
-                else { (CommitState::At(local), false) }
+                if remote_idx.0 > local.0 {
+                    (CommitState::At(remote_idx), true)
+                } else {
+                    (CommitState::At(local), false)
+                }
             }
         }
     }
@@ -134,7 +176,6 @@ impl CommitState {
         }
     }
 }
-
 
 impl fmt::Display for CommitState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -168,22 +209,34 @@ pub struct DurableEpoch(pub u64);
 
 impl DurableEpoch {
     #[inline]
-    pub const fn from_view(view: ViewId) -> Self { DurableEpoch(view.0) }
+    pub const fn from_view(view: ViewId) -> Self {
+        DurableEpoch(view.0)
+    }
     #[inline]
-    pub const fn get(self) -> u64 { self.0 }
+    pub const fn get(self) -> u64 {
+        self.0
+    }
     #[inline]
-    pub const fn is_stale(self, current: Self) -> bool { self.0 < current.0 }
+    pub const fn is_stale(self, current: Self) -> bool {
+        self.0 < current.0
+    }
     #[cfg(test)]
-    pub const fn invalid() -> Self { DurableEpoch(u64::MAX) }
+    pub const fn invalid() -> Self {
+        DurableEpoch(u64::MAX)
+    }
 }
 
 impl fmt::Display for DurableEpoch {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "Epoch({})", self.0) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Epoch({})", self.0)
+    }
 }
 
 impl From<ViewId> for DurableEpoch {
     #[inline]
-    fn from(view: ViewId) -> Self { DurableEpoch::from_view(view) }
+    fn from(view: ViewId) -> Self {
+        DurableEpoch::from_view(view)
+    }
 }
 
 #[cfg(test)]
@@ -262,14 +315,12 @@ mod tests {
         assert!(!advanced);
 
         // At(5) merge At(3) = At(5), not advanced (local wins)
-        let (merged, advanced) =
-            CommitState::At(LogIndex(5)).merge(CommitState::At(LogIndex(3)));
+        let (merged, advanced) = CommitState::At(LogIndex(5)).merge(CommitState::At(LogIndex(3)));
         assert_eq!(merged, CommitState::At(LogIndex(5)));
         assert!(!advanced);
 
         // At(3) merge At(5) = At(5), advanced (remote wins)
-        let (merged, advanced) =
-            CommitState::At(LogIndex(3)).merge(CommitState::At(LogIndex(5)));
+        let (merged, advanced) = CommitState::At(LogIndex(3)).merge(CommitState::At(LogIndex(5)));
         assert_eq!(merged, CommitState::At(LogIndex(5)));
         assert!(advanced);
     }

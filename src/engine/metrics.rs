@@ -8,7 +8,9 @@ pub struct Counter {
 
 impl Counter {
     pub const fn new() -> Self {
-        Counter { value: AtomicU64::new(0) }
+        Counter {
+            value: AtomicU64::new(0),
+        }
     }
 
     #[inline]
@@ -39,7 +41,9 @@ pub struct Gauge {
 
 impl Gauge {
     pub const fn new() -> Self {
-        Gauge { value: AtomicU64::new(0) }
+        Gauge {
+            value: AtomicU64::new(0),
+        }
     }
 
     #[inline]

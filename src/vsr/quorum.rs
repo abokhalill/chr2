@@ -8,7 +8,9 @@ pub struct NodeBitset(u64);
 
 impl NodeBitset {
     #[inline]
-    pub fn new() -> Self { NodeBitset(0) }
+    pub fn new() -> Self {
+        NodeBitset(0)
+    }
 
     #[inline]
     pub fn insert(&mut self, node_id: u32) {
@@ -17,7 +19,9 @@ impl NodeBitset {
     }
 
     #[inline]
-    pub fn count(&self) -> u32 { self.0.count_ones() }
+    pub fn count(&self) -> u32 {
+        self.0.count_ones()
+    }
 
     #[inline]
     pub fn contains(&self, node_id: u32) -> bool {
@@ -82,7 +86,9 @@ impl QuorumTracker {
             .unwrap_or(false)
     }
 
-    pub fn quorum_index(&self) -> Option<u64> { self.quorum_index }
+    pub fn quorum_index(&self) -> Option<u64> {
+        self.quorum_index
+    }
 
     pub fn committable_index_from(&self, current_committed: Option<u64>) -> Option<u64> {
         let quorum_idx = self.quorum_index?;
@@ -93,13 +99,18 @@ impl QuorumTracker {
 
         let mut highest_committable = current_committed;
         for idx in start..=quorum_idx {
-            if self.has_quorum(idx) { highest_committable = Some(idx); }
-            else { break; }
+            if self.has_quorum(idx) {
+                highest_committable = Some(idx);
+            } else {
+                break;
+            }
         }
         highest_committable
     }
 
-    pub fn committable_index(&self) -> Option<u64> { self.committable_index_from(None) }
+    pub fn committable_index(&self) -> Option<u64> {
+        self.committable_index_from(None)
+    }
 
     pub fn gc(&mut self, committed_index: u64) {
         self.pending.retain(|&idx, _| idx > committed_index);
@@ -112,7 +123,9 @@ impl QuorumTracker {
             .unwrap_or(0)
     }
 
-    pub fn quorum_size(&self) -> u32 { self.quorum_size }
+    pub fn quorum_size(&self) -> u32 {
+        self.quorum_size
+    }
 }
 
 #[cfg(test)]

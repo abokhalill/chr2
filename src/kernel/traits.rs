@@ -178,10 +178,21 @@ pub struct Outbox {
 }
 
 impl Outbox {
-    pub fn new() -> Self { Outbox { entries: BTreeMap::new() } }
+    pub fn new() -> Self {
+        Outbox {
+            entries: BTreeMap::new(),
+        }
+    }
 
     pub fn add_pending(&mut self, id: EffectId, effect: SideEffect, created_at_index: u64) {
-        self.entries.insert(id, OutboxEntry { effect, status: SideEffectStatus::Pending, created_at_index });
+        self.entries.insert(
+            id,
+            OutboxEntry {
+                effect,
+                status: SideEffectStatus::Pending,
+                created_at_index,
+            },
+        );
     }
 
     pub fn acknowledge(&mut self, id: &EffectId) -> bool {
@@ -195,18 +206,30 @@ impl Outbox {
     }
 
     pub fn pending_effects(&self) -> Vec<(EffectId, &OutboxEntry)> {
-        self.entries.iter()
+        self.entries
+            .iter()
             .filter(|(_, entry)| entry.status == SideEffectStatus::Pending)
             .map(|(id, entry)| (*id, entry))
             .collect()
     }
 
-    pub fn get(&self, id: &EffectId) -> Option<&OutboxEntry> { self.entries.get(id) }
-    pub fn contains(&self, id: &EffectId) -> bool { self.entries.contains_key(id) }
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn get(&self, id: &EffectId) -> Option<&OutboxEntry> {
+        self.entries.get(id)
+    }
+    pub fn contains(&self, id: &EffectId) -> bool {
+        self.entries.contains_key(id)
+    }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
     pub fn pending_count(&self) -> usize {
-        self.entries.values().filter(|e| e.status == SideEffectStatus::Pending).count()
+        self.entries
+            .values()
+            .filter(|e| e.status == SideEffectStatus::Pending)
+            .count()
     }
 
     pub fn compact(&mut self, before_index: u64) {

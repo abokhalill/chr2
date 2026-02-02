@@ -31,7 +31,9 @@ impl NetworkEndpoint {
         let mut count = 0;
         for (&target_id, tx) in &self.tx_map {
             if let Some(connected) = self.connected.get(&target_id) {
-                if !connected.load(Ordering::SeqCst) { continue; }
+                if !connected.load(Ordering::SeqCst) {
+                    continue;
+                }
             }
 
             if tx.send((self.node_id, msg.clone())).is_ok() {
@@ -41,8 +43,12 @@ impl NetworkEndpoint {
         count
     }
 
-    pub fn try_recv(&self) -> Option<(u32, VsrMessage)> { self.rx.try_recv().ok() }
-    pub fn recv(&self) -> Option<(u32, VsrMessage)> { self.rx.recv().ok() }
+    pub fn try_recv(&self) -> Option<(u32, VsrMessage)> {
+        self.rx.try_recv().ok()
+    }
+    pub fn recv(&self) -> Option<(u32, VsrMessage)> {
+        self.rx.recv().ok()
+    }
     pub fn recv_timeout(&self, timeout: std::time::Duration) -> Option<(u32, VsrMessage)> {
         self.rx.recv_timeout(timeout).ok()
     }

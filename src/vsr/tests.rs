@@ -243,7 +243,7 @@ fn test_vsr_quorum_commit() {
     // Note: We do NOT test Node 2 catch-up here because the catch-up mechanism
     // is not yet implemented. Node 2 would receive Prepare for index 1 but
     // doesn't have index 0 in its log, causing an error.
-    // 
+    //
     // The quorum commit test is complete: we verified that with 2/3 nodes
     // (Node 0 and Node 1), quorum is reached and entries are committed.
 
@@ -509,7 +509,7 @@ fn test_vsr_failure_detection() {
 /// 3. Backup should NOT start view change as long as heartbeats arrive
 #[test]
 fn test_vsr_heartbeat_prevents_election() {
-    use super::node::{ELECTION_TIMEOUT, HEARTBEAT_INTERVAL};
+    use super::node::HEARTBEAT_INTERVAL;
 
     let paths = TestPaths::new("chr_heartbeat", 2);
 
@@ -791,8 +791,8 @@ fn test_vsr_full_view_change() {
 /// 7. Balance is 100, NOT 200
 #[test]
 fn test_client_exactly_once_during_failover() {
-    use super::client::{ChrClient, SessionMap};
-    use super::message::{ClientRequest, ClientResult};
+    use super::client::ChrClient;
+    use super::message::ClientResult;
     use super::node::ELECTION_TIMEOUT;
 
     let paths = TestPaths::new("chr_idempotent", 3);
@@ -1761,7 +1761,7 @@ fn test_scheduler_fairness() {
 /// that the timestamp flows through the message protocol correctly.
 #[test]
 fn test_deterministic_drift_protection() {
-    use super::message::{ClientRequest, ClientResult, PreparedEntry, VsrMessage};
+    use super::message::{PreparedEntry, VsrMessage};
 
     // Test that PrepareBatch carries timestamp and it's consistent
     let timestamp_ns: u64 = 1_700_000_000_000_000_000; // Fixed timestamp
@@ -1918,7 +1918,7 @@ fn test_async_durability_mode() {
     assert!(node_0.is_async_durability_enabled());
 
     // Create Backup node (sync mode)
-    let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
+    let node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
         2,
         1,
@@ -2036,7 +2036,7 @@ fn test_heartbeat_decoupled_from_flush() {
     )
     .unwrap();
 
-    let mut node_1: VsrNode<BankApp> = VsrNode::new_backup(
+    let node_1: VsrNode<BankApp> = VsrNode::new_backup(
         1,
         2,
         1,

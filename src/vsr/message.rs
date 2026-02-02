@@ -111,9 +111,16 @@ impl VsrMessage {
     pub fn index(&self) -> Option<u64> {
         match self {
             VsrMessage::Prepare { index, .. } => Some(*index),
-            VsrMessage::PrepareBatch { start_index, entries, .. } => {
-                if entries.is_empty() { Some(*start_index) }
-                else { Some(start_index + entries.len() as u64 - 1) }
+            VsrMessage::PrepareBatch {
+                start_index,
+                entries,
+                ..
+            } => {
+                if entries.is_empty() {
+                    Some(*start_index)
+                } else {
+                    Some(start_index + entries.len() as u64 - 1)
+                }
             }
             VsrMessage::PrepareOk { index, .. } => Some(*index),
             VsrMessage::Commit { .. } => None,

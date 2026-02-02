@@ -12,15 +12,14 @@ use std::time::{Duration, Instant};
 
 use rand::Rng;
 
-use crate::chaos::checker::{Checker, Operation, OperationResult, SharedHistory};
-use crate::chaos::nemesis::{Fault, Nemesis, NemesisConfig};
+use crate::chaos::checker::{Operation, OperationResult, SharedHistory};
 use crate::chaos::network::{ChaosConfig, ChaosNetwork};
 use crate::engine::log::LogWriter;
 use crate::engine::reader::CommittedState;
-use crate::kernel::bank::{BankApp, BankEvent};
+use crate::kernel::bank::BankEvent;
 use crate::vsr::client::ChrClient;
 use crate::vsr::message::{ClientRequest, ClientResult};
-use crate::vsr::node::{NodeRole, VsrNode, ELECTION_TIMEOUT};
+use crate::vsr::node::{NodeRole, ELECTION_TIMEOUT};
 
 /// Serialize a bank event to bytes.
 fn serialize_event(event: &BankEvent) -> Vec<u8> {
@@ -238,7 +237,7 @@ impl ChaosNode {
                         self.last_primary_contact = Instant::now();
 
                         // Append to log with consensus timestamp from Primary
-                        if let Ok(_) = self.writer.append(&payload, 0, 0, timestamp_ns) {
+                        if self.writer.append(&payload, 0, 0, timestamp_ns).is_ok() {
                             // Send PrepareOk
                             let prepare_ok = VsrMessage::PrepareOk {
                                 index,
@@ -403,16 +402,11 @@ impl ChaosNode {
     }
 
     fn handle_start_view_change(&mut self, new_view: u64, from_node: u32) {
-        use std::collections::HashSet;
-
         if new_view <= self.view {
             return;
         }
 
-        let votes = self
-            .start_view_change_votes
-            .entry(new_view)
-            .or_insert_with(HashSet::new);
+        let votes = self.start_view_change_votes.entry(new_view).or_default();
         votes.insert(from_node);
 
         if self.role == NodeRole::ViewChangeInProgress && self.proposed_view == new_view {
@@ -435,21 +429,16 @@ impl ChaosNode {
             self.proposed_view = new_view;
 
             let my_info = self.create_do_view_change_info();
-            let msgs = self
-                .do_view_change_msgs
-                .entry(new_view)
-                .or_insert_with(Vec::new);
+            let msgs = self.do_view_change_msgs.entry(new_view).or_default();
             if !msgs.iter().any(|m| m.node_id == self.node_id) {
                 msgs.push(my_info);
             }
 
             self.check_do_view_change_quorum(new_view);
-        } else {
-            if !self.sent_do_view_change || self.proposed_view != new_view {
-                self.send_do_view_change(new_view, new_primary);
-                self.sent_do_view_change = true;
-                self.proposed_view = new_view;
-            }
+        } else if !self.sent_do_view_change || self.proposed_view != new_view {
+            self.send_do_view_change(new_view, new_primary);
+            self.sent_do_view_change = true;
+            self.proposed_view = new_view;
         }
     }
 
@@ -512,10 +501,7 @@ impl ChaosNode {
             log_suffix,
         };
 
-        let msgs = self
-            .do_view_change_msgs
-            .entry(new_view)
-            .or_insert_with(Vec::new);
+        let msgs = self.do_view_change_msgs.entry(new_view).or_default();
         if !msgs.iter().any(|m| m.node_id == from_node) {
             msgs.push(info);
         }
@@ -590,22 +576,27 @@ impl ChaosNode {
         self.sent_do_view_change = false;
     }
 
+    #[allow(dead_code)]
     fn committed_index(&self) -> Option<u64> {
         self.committed_state.committed_index()
     }
 
+    #[allow(dead_code)]
     fn current_view(&self) -> u64 {
         self.view
     }
 
+    #[allow(dead_code)]
     fn is_primary(&self) -> bool {
         self.role == NodeRole::Primary
     }
 
+    #[allow(dead_code)]
     fn session_map(&self) -> &crate::vsr::client::SessionMap {
         &self.session_map
     }
 
+    #[allow(dead_code)]
     fn restore_session_map(&mut self, session_map: crate::vsr::client::SessionMap) {
         self.session_map = session_map;
     }

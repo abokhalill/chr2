@@ -843,7 +843,7 @@ mod tests {
 
         // Write a single entry first
         writer.append(b"entry_0", 0, 0, 1_000_000_000).unwrap();
-        let hash_after_single = writer.tail_hash();
+        let _hash_after_single = writer.tail_hash();
 
         // Write a batch
         let payloads: Vec<Vec<u8>> = (1..5)

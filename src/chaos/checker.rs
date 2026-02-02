@@ -76,8 +76,12 @@ impl History {
             .and_then(|&idx| self.entries.get(idx))
     }
 
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
     pub fn clear(&mut self) {
         self.entries.clear();
         self.by_client.clear();
@@ -90,7 +94,9 @@ pub struct SharedHistory {
 
 impl SharedHistory {
     pub fn new() -> Self {
-        SharedHistory { inner: Arc::new(Mutex::new(History::new())) }
+        SharedHistory {
+            inner: Arc::new(Mutex::new(History::new())),
+        }
     }
 
     pub fn record(
@@ -107,13 +113,26 @@ impl SharedHistory {
 
     pub fn snapshot(&self) -> History {
         let history = self.inner.lock().unwrap();
-        History { entries: history.entries.clone(), by_client: history.by_client.clone() }
+        History {
+            entries: history.entries.clone(),
+            by_client: history.by_client.clone(),
+        }
     }
 
-    pub fn len(&self) -> usize { self.inner.lock().unwrap().len() }
-    pub fn is_empty(&self) -> bool { self.inner.lock().unwrap().is_empty() }
-    pub fn clear(&self) { self.inner.lock().unwrap().clear(); }
-    pub fn clone_arc(&self) -> Self { SharedHistory { inner: self.inner.clone() } }
+    pub fn len(&self) -> usize {
+        self.inner.lock().unwrap().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.inner.lock().unwrap().is_empty()
+    }
+    pub fn clear(&self) {
+        self.inner.lock().unwrap().clear();
+    }
+    pub fn clone_arc(&self) -> Self {
+        SharedHistory {
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl Default for SharedHistory {
@@ -167,8 +186,14 @@ pub struct Checker {
 }
 
 impl Checker {
-    pub fn new(initial_balances: HashMap<String, u64>) -> Self { Checker { initial_balances } }
-    pub fn empty() -> Self { Checker { initial_balances: HashMap::new() } }
+    pub fn new(initial_balances: HashMap<String, u64>) -> Self {
+        Checker { initial_balances }
+    }
+    pub fn empty() -> Self {
+        Checker {
+            initial_balances: HashMap::new(),
+        }
+    }
 
     pub fn verify(&self, history: &History, final_balances: &HashMap<String, u64>) -> CheckResult {
         let mut violations = Vec::new();

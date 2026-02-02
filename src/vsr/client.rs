@@ -17,7 +17,11 @@ pub struct SessionMap {
 }
 
 impl SessionMap {
-    pub fn new() -> Self { SessionMap { sessions: HashMap::new() } }
+    pub fn new() -> Self {
+        SessionMap {
+            sessions: HashMap::new(),
+        }
+    }
 
     pub fn check_duplicate(&self, client_id: u64, sequence_number: u64) -> Option<ClientResponse> {
         if let Some(session) = self.sessions.get(&client_id) {
@@ -53,11 +57,18 @@ impl SessionMap {
     }
 
     pub fn last_sequence(&self, client_id: u64) -> u64 {
-        self.sessions.get(&client_id).map(|s| s.last_sequence_number).unwrap_or(0)
+        self.sessions
+            .get(&client_id)
+            .map(|s| s.last_sequence_number)
+            .unwrap_or(0)
     }
 
-    pub fn clear(&mut self) { self.sessions.clear(); }
-    pub fn client_count(&self) -> usize { self.sessions.len() }
+    pub fn clear(&mut self) {
+        self.sessions.clear();
+    }
+    pub fn client_count(&self) -> usize {
+        self.sessions.len()
+    }
 }
 
 #[derive(Debug)]
@@ -100,13 +111,25 @@ impl ChrClient {
     }
 
     pub fn create_request_with_seq(&self, payload: Vec<u8>, sequence_number: u64) -> ClientRequest {
-        ClientRequest { client_id: self.client_id, sequence_number, payload }
+        ClientRequest {
+            client_id: self.client_id,
+            sequence_number,
+            payload,
+        }
     }
 
-    pub fn current_sequence(&self) -> u64 { self.next_sequence }
-    pub fn update_leader(&mut self, leader_id: u32) { self.last_known_leader = Some(leader_id); }
-    pub fn last_known_leader(&self) -> Option<u32> { self.last_known_leader }
-    pub fn target_node(&self) -> u32 { self.last_known_leader.unwrap_or(self.cluster_nodes[0]) }
+    pub fn current_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+    pub fn update_leader(&mut self, leader_id: u32) {
+        self.last_known_leader = Some(leader_id);
+    }
+    pub fn last_known_leader(&self) -> Option<u32> {
+        self.last_known_leader
+    }
+    pub fn target_node(&self) -> u32 {
+        self.last_known_leader.unwrap_or(self.cluster_nodes[0])
+    }
 
     pub fn handle_redirect(&mut self, leader_hint: Option<u32>) -> u32 {
         if let Some(leader) = leader_hint {
@@ -124,7 +147,9 @@ impl ChrClient {
         self.base_timeout * 2u32.pow(attempt.min(5))
     }
 
-    pub fn max_retries(&self) -> u32 { self.max_retries }
+    pub fn max_retries(&self) -> u32 {
+        self.max_retries
+    }
 
     pub fn is_overload_error(response: &ClientResponse) -> bool {
         matches!(&response.result, ClientResult::Error { message } if message.contains("System Overloaded"))
@@ -134,7 +159,9 @@ impl ChrClient {
         Duration::from_millis(100 * 2u64.pow(attempt.min(5)))
     }
 
-    pub fn handle_overload(&self, attempt: u32) -> Duration { self.overload_backoff_duration(attempt) }
+    pub fn handle_overload(&self, attempt: u32) -> Duration {
+        self.overload_backoff_duration(attempt)
+    }
 }
 
 #[cfg(test)]

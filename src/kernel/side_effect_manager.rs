@@ -183,7 +183,12 @@ impl SideEffectManager {
     pub fn advance_durable_epoch(&self, new_epoch: DurableEpoch) {
         let mut cur = self.durable_epoch.load(Ordering::SeqCst);
         while new_epoch.get() > cur {
-            match self.durable_epoch.compare_exchange(cur, new_epoch.get(), Ordering::SeqCst, Ordering::SeqCst) {
+            match self.durable_epoch.compare_exchange(
+                cur,
+                new_epoch.get(),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
                 Ok(_) => {
                     self.lease_epoch.store(INVALID_LEASE, Ordering::SeqCst);
                     if let Ok(mut tracker) = self.in_flight.lock() {
@@ -224,7 +229,9 @@ impl SideEffectManager {
     }
 
     pub fn is_primary(&self) -> bool {
-        if !self.is_primary.load(Ordering::SeqCst) { return false; }
+        if !self.is_primary.load(Ordering::SeqCst) {
+            return false;
+        }
         self.lease_epoch.load(Ordering::SeqCst) == self.durable_epoch.load(Ordering::SeqCst)
     }
 
@@ -234,15 +241,23 @@ impl SideEffectManager {
 
     pub fn lease_epoch(&self) -> Option<DurableEpoch> {
         let lease = self.lease_epoch.load(Ordering::SeqCst);
-        if lease == INVALID_LEASE { None } else { Some(DurableEpoch(lease)) }
+        if lease == INVALID_LEASE {
+            None
+        } else {
+            Some(DurableEpoch(lease))
+        }
     }
 
     pub fn process_pending(&self, outbox: &Outbox) -> usize {
-        if !self.is_primary() { return 0; }
+        if !self.is_primary() {
+            return 0;
+        }
 
         let durable_snapshot = self.durable_epoch.load(Ordering::SeqCst);
         let lease_snapshot = self.lease_epoch.load(Ordering::SeqCst);
-        if lease_snapshot != durable_snapshot { return 0; }
+        if lease_snapshot != durable_snapshot {
+            return 0;
+        }
 
         let pending = outbox.pending_effects();
         let mut processed = 0;
@@ -254,9 +269,15 @@ impl SideEffectManager {
         tracker.clear_timed_out(self.config.execution_timeout);
 
         for (effect_id, entry) in pending.iter().take(self.config.max_effects_per_cycle) {
-            if !self.is_primary.load(Ordering::SeqCst) { break; }
-            if self.durable_epoch.load(Ordering::SeqCst) != durable_snapshot { break; }
-            if self.lease_epoch.load(Ordering::SeqCst) != lease_snapshot { break; }
+            if !self.is_primary.load(Ordering::SeqCst) {
+                break;
+            }
+            if self.durable_epoch.load(Ordering::SeqCst) != durable_snapshot {
+                break;
+            }
+            if self.lease_epoch.load(Ordering::SeqCst) != lease_snapshot {
+                break;
+            }
 
             if tracker.is_in_flight(effect_id) {
                 continue;
@@ -402,7 +423,6 @@ impl MockAcknowledgeSubmitter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::traits::SideEffectStatus;
 
     #[test]
     fn test_in_flight_tracker() {
@@ -519,7 +539,7 @@ mod tests {
         };
         outbox.add_pending(effect_id_2, effect_2, 0);
 
-        manager.advance_fence(1);
+        manager.advance_durable_epoch(DurableEpoch(1));
 
         let processed = manager.process_pending(&outbox);
         assert_eq!(processed, 0);

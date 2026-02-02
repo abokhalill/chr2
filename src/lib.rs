@@ -11,8 +11,8 @@
 //! - [`vsr`]: Viewstamped Replication consensus protocol implementation.
 //! - [`chaos`]: Chaos testing framework for adversarial fault injection.
 
-pub mod types;
 pub mod chaos;
 pub mod engine;
 pub mod kernel;
+pub mod types;
 pub mod vsr;

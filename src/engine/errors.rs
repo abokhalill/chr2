@@ -9,14 +9,26 @@ pub enum FatalError {
         expected: [u8; 16],
         found: [u8; 16],
     },
-    MidLogCorruption { offset: u64, index: u64 },
-    ZeroHole { zero_offset: u64, data_offset: u64 },
-    MonotonicityViolation { expected: u64, found: u64 },
+    MidLogCorruption {
+        offset: u64,
+        index: u64,
+    },
+    ZeroHole {
+        zero_offset: u64,
+        data_offset: u64,
+    },
+    MonotonicityViolation {
+        expected: u64,
+        found: u64,
+    },
     ViewRegression {
         previous_view: u64,
         current_view: u64,
     },
-    PayloadTooLarge { size: u32, max: u32 },
+    PayloadTooLarge {
+        size: u32,
+        max: u32,
+    },
     IoError(io::Error),
     InvariantViolation {
         component: &'static str,
@@ -107,8 +119,13 @@ impl From<io::Error> for FatalError {
 /// Recoverable via truncation (torn writes at tail only).
 #[derive(Debug)]
 pub enum RecoverableError {
-    HeaderCrcMismatch { offset: u64 },
-    PayloadHashMismatch { offset: u64, index: u64 },
+    HeaderCrcMismatch {
+        offset: u64,
+    },
+    PayloadHashMismatch {
+        offset: u64,
+        index: u64,
+    },
     IncompleteRead {
         offset: u64,
         expected: usize,

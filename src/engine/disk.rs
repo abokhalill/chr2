@@ -165,22 +165,18 @@ impl VirtualDisk for SyncDisk {
 
         // Verify the requested token is actually committed
         match committed {
-            Some(idx) if idx >= up_to.index() => {
-                Ok(BarrierResult {
-                    durable_index: idx,
-                    entries_synced: 0,
-                })
-            }
-            Some(idx) => {
-                Err(FatalError::IoError(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "Barrier requested for {} but only {} is committed",
-                        up_to.index(),
-                        idx
-                    ),
-                )))
-            }
+            Some(idx) if idx >= up_to.index() => Ok(BarrierResult {
+                durable_index: idx,
+                entries_synced: 0,
+            }),
+            Some(idx) => Err(FatalError::IoError(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "Barrier requested for {} but only {} is committed",
+                    up_to.index(),
+                    idx
+                ),
+            ))),
             None => {
                 if up_to.index() == 0 {
                     Err(FatalError::IoError(io::Error::new(

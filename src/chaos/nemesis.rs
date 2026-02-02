@@ -70,8 +70,12 @@ impl Nemesis {
         }
     }
 
-    pub fn set_view(&self, view: u64) { self.current_view.store(view, Ordering::SeqCst); }
-    pub fn get_view(&self) -> u64 { self.current_view.load(Ordering::SeqCst) }
+    pub fn set_view(&self, view: u64) {
+        self.current_view.store(view, Ordering::SeqCst);
+    }
+    pub fn get_view(&self) -> u64 {
+        self.current_view.load(Ordering::SeqCst)
+    }
 
     pub fn start(&self) -> thread::JoinHandle<()> {
         self.running.store(true, Ordering::SeqCst);
@@ -141,16 +145,24 @@ impl Nemesis {
         })
     }
 
-    pub fn stop(&self) { self.running.store(false, Ordering::SeqCst); }
-    pub fn is_running(&self) -> bool { self.running.load(Ordering::SeqCst) }
+    pub fn stop(&self) {
+        self.running.store(false, Ordering::SeqCst);
+    }
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
 
     pub fn inject(&self, fault: Fault) {
         let view = self.current_view.load(Ordering::SeqCst);
         Self::inject_fault_static(&self.network, fault, view, &self.history);
     }
 
-    pub fn get_history(&self) -> Vec<FaultEvent> { self.history.lock().unwrap().clone() }
-    pub fn clear_history(&self) { self.history.lock().unwrap().clear(); }
+    pub fn get_history(&self) -> Vec<FaultEvent> {
+        self.history.lock().unwrap().clone()
+    }
+    pub fn clear_history(&self) {
+        self.history.lock().unwrap().clear();
+    }
 
     fn choose_fault(weights: &[f64; 3], rng: &mut impl Rng) -> Fault {
         let total: f64 = weights.iter().sum();

@@ -4,11 +4,11 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::types::{CommitState, LogIndex};
 use crate::engine::format::{
     compute_chain_hash, compute_payload_hash, frame_size, LogHeader, LogMetadata, HEADER_SIZE,
     LOG_METADATA_SIZE,
 };
+use crate::types::{CommitState, LogIndex};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -25,12 +25,25 @@ pub struct LogEntry {
 
 #[derive(Debug)]
 pub enum ReadError {
-    IndexNotCommitted { requested: u64, committed: Option<u64> },
-    IndexNotFound { requested: u64 },
-    IndexTruncated { requested: u64, base_index: u64 },
+    IndexNotCommitted {
+        requested: u64,
+        committed: Option<u64>,
+    },
+    IndexNotFound {
+        requested: u64,
+    },
+    IndexTruncated {
+        requested: u64,
+        base_index: u64,
+    },
     Io(io::Error),
-    ValidationFailed { index: u64, reason: &'static str },
-    TruncatedDuringRead { index: u64 },
+    ValidationFailed {
+        index: u64,
+        reason: &'static str,
+    },
+    TruncatedDuringRead {
+        index: u64,
+    },
 }
 
 impl From<io::Error> for ReadError {
@@ -91,29 +104,43 @@ const NO_COMMITS_SENTINEL: u64 = u64::MAX;
 
 impl CommittedState {
     pub fn new() -> Self {
-        CommittedState { committed_index: AtomicU64::new(NO_COMMITS_SENTINEL) }
+        CommittedState {
+            committed_index: AtomicU64::new(NO_COMMITS_SENTINEL),
+        }
     }
 
     #[allow(dead_code)]
     pub fn from_recovered(last_index: Option<u64>) -> Self {
         let value = last_index.unwrap_or(NO_COMMITS_SENTINEL);
-        CommittedState { committed_index: AtomicU64::new(value) }
+        CommittedState {
+            committed_index: AtomicU64::new(value),
+        }
     }
 
     #[inline]
     pub fn commit_state(&self) -> CommitState {
         let idx = self.committed_index.load(Ordering::Acquire);
-        if idx == NO_COMMITS_SENTINEL { CommitState::Empty }
-        else { CommitState::At(LogIndex(idx)) }
+        if idx == NO_COMMITS_SENTINEL {
+            CommitState::Empty
+        } else {
+            CommitState::At(LogIndex(idx))
+        }
     }
 
     #[inline]
     pub fn committed_index(&self) -> Option<u64> {
         let idx = self.committed_index.load(Ordering::Acquire);
-        if idx == NO_COMMITS_SENTINEL { None } else { Some(idx) }
+        if idx == NO_COMMITS_SENTINEL {
+            None
+        } else {
+            Some(idx)
+        }
     }
 
-    pub fn try_advance(&self, new_state: CommitState) -> Result<(), crate::types::CommitAdvanceError> {
+    pub fn try_advance(
+        &self,
+        new_state: CommitState,
+    ) -> Result<(), crate::types::CommitAdvanceError> {
         let new_value = match new_state {
             CommitState::Empty => {
                 return Err(crate::types::CommitAdvanceError::Regression {
@@ -127,10 +154,20 @@ impl CommittedState {
         loop {
             let current = self.committed_index.load(Ordering::Acquire);
             if current != NO_COMMITS_SENTINEL && new_value <= current {
-                if new_value == current { return Ok(()); }
-                return Err(crate::types::CommitAdvanceError::Regression { current, attempted: new_value });
+                if new_value == current {
+                    return Ok(());
+                }
+                return Err(crate::types::CommitAdvanceError::Regression {
+                    current,
+                    attempted: new_value,
+                });
             }
-            match self.committed_index.compare_exchange(current, new_value, Ordering::Release, Ordering::Acquire) {
+            match self.committed_index.compare_exchange(
+                current,
+                new_value,
+                Ordering::Release,
+                Ordering::Acquire,
+            ) {
                 Ok(_) => return Ok(()),
                 Err(_) => continue,
             }
@@ -151,7 +188,9 @@ impl CommittedState {
 }
 
 impl Default for CommittedState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Read-only. Multiple instances allowed. ENFORCES F3 via committed_state.

@@ -4,6 +4,7 @@ use super::*;
 use crate::engine::log::LogWriter;
 use crate::engine::reader::{CommittedState, LogReader};
 use crate::kernel::bank::{BankApp, BankEvent, BankQuery, BankQueryResponse};
+use crate::kernel::snapshot::SnapshotManifest;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -251,8 +252,6 @@ fn test_executor_respects_committed_index() {
 ///    - chain_hash matches log entry at that index
 #[test]
 fn test_snapshot_isolation() {
-    use crate::kernel::snapshot::SnapshotManifest;
-
     let log_path = Path::new("/tmp/chr_snapshot_isolation.log");
     let snapshot_dir = PathBuf::from("/tmp/chr_snapshot_isolation_snapshots");
     let _ = fs::remove_file(log_path);
@@ -342,7 +341,7 @@ fn test_snapshot_isolation() {
     for i in 5..8u64 {
         let payload = serialize_event(&BankEvent::Deposit {
             user: format!("User{}", i),
-            amount: ((i + 1) * 100) as u64,
+            amount: ((i + 1) * 100),
         });
         writer.append(&payload, 0, 0, 1_000_000_000).unwrap();
         committed_state.advance(i);
@@ -464,8 +463,6 @@ fn test_should_snapshot_threshold() {
 /// from a snapshot + log suffix and reach the same state.
 #[test]
 fn test_executor_restart_integrity() {
-    use crate::kernel::snapshot::SnapshotManifest;
-
     let log_path = Path::new("/tmp/chr_restart_integrity.log");
     let snapshot_dir = PathBuf::from("/tmp/chr_restart_integrity_snapshots");
     let _ = fs::remove_file(log_path);
@@ -545,8 +542,6 @@ fn test_executor_restart_integrity() {
 /// This tests the critical invariant: entry[N+1].prev_hash == snapshot.chain_hash
 #[test]
 fn test_corrupt_bridge_fails() {
-    use crate::kernel::snapshot::SnapshotManifest;
-
     let log_path = Path::new("/tmp/chr_corrupt_bridge.log");
     let snapshot_dir = PathBuf::from("/tmp/chr_corrupt_bridge_snapshots");
     let _ = fs::remove_file(log_path);
@@ -619,11 +614,10 @@ fn test_corrupt_bridge_fails() {
 /// - Snapshot at index N
 /// - Entry at N+1 is missing
 /// - Entry at N+2 exists
+///
 /// Recovery MUST fail with LogGap error.
 #[test]
 fn test_log_gap_after_snapshot_fails() {
-    use crate::kernel::snapshot::SnapshotManifest;
-
     let log_path = Path::new("/tmp/chr_log_gap.log");
     let snapshot_dir = PathBuf::from("/tmp/chr_log_gap_snapshots");
     let _ = fs::remove_file(log_path);
@@ -734,8 +728,6 @@ fn test_recovery_no_snapshot() {
 /// when the latest snapshot is corrupted.
 #[test]
 fn test_recovery_fallback_to_older_snapshot() {
-    use crate::kernel::snapshot::SnapshotManifest;
-
     let log_path = Path::new("/tmp/chr_fallback_snapshot.log");
     let snapshot_dir = PathBuf::from("/tmp/chr_fallback_snapshot_snapshots");
     let _ = fs::remove_file(log_path);
@@ -823,7 +815,6 @@ fn test_recovery_fallback_to_older_snapshot() {
 #[test]
 fn test_physical_compaction_integrity() {
     use crate::engine::recovery::{LogRecovery, RecoveryOutcome};
-    use crate::kernel::snapshot::SnapshotManifest;
 
     let log_path = Path::new("/tmp/chr_compaction_integrity.log");
     let snapshot_dir = PathBuf::from("/tmp/chr_compaction_integrity_snapshots");
@@ -849,7 +840,7 @@ fn test_physical_compaction_integrity() {
     let original_size = fs::metadata(log_path).unwrap().len();
 
     // Step 2: Create executor and apply entries up to index 50, then snapshot
-    let mut reader = LogReader::open(log_path, committed_state.clone()).unwrap();
+    let reader = LogReader::open(log_path, committed_state.clone()).unwrap();
     let app = BankApp::new();
     let mut executor = Executor::with_snapshot_dir(reader, app, 0, snapshot_dir.clone());
 

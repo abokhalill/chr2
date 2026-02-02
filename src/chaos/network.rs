@@ -86,21 +86,29 @@ impl ChaosEndpoint {
     }
 
     pub fn try_recv(&self) -> Option<(u32, VsrMessage)> {
-        if self.killed.load(Ordering::SeqCst) { return None; }
+        if self.killed.load(Ordering::SeqCst) {
+            return None;
+        }
         self.rx.try_recv().ok()
     }
 
     pub fn recv(&self) -> Option<(u32, VsrMessage)> {
-        if self.killed.load(Ordering::SeqCst) { return None; }
+        if self.killed.load(Ordering::SeqCst) {
+            return None;
+        }
         self.rx.recv().ok()
     }
 
     pub fn recv_timeout(&self, timeout: Duration) -> Option<(u32, VsrMessage)> {
-        if self.killed.load(Ordering::SeqCst) { return None; }
+        if self.killed.load(Ordering::SeqCst) {
+            return None;
+        }
         self.rx.recv_timeout(timeout).ok()
     }
 
-    pub fn is_killed(&self) -> bool { self.killed.load(Ordering::SeqCst) }
+    pub fn is_killed(&self) -> bool {
+        self.killed.load(Ordering::SeqCst)
+    }
 }
 
 pub struct ChaosNetwork {
@@ -340,8 +348,12 @@ impl ChaosNetwork {
         *self.config.write().unwrap() = new_config;
     }
 
-    pub fn get_config(&self) -> ChaosConfig { self.config.read().unwrap().clone() }
-    pub fn cluster_size(&self) -> u32 { self.cluster_size }
+    pub fn get_config(&self) -> ChaosConfig {
+        self.config.read().unwrap().clone()
+    }
+    pub fn cluster_size(&self) -> u32 {
+        self.cluster_size
+    }
 
     pub fn is_killed(&self, node_id: u32) -> bool {
         self.kill_flags
@@ -411,7 +423,7 @@ mod tests {
         let network = ChaosNetwork::new(2, config);
 
         let ep0 = network.create_endpoint(0).unwrap();
-        let ep1 = network.create_endpoint(1).unwrap();
+        let _ep1 = network.create_endpoint(1).unwrap();
 
         // Kill node 0
         network.kill_node(0);
