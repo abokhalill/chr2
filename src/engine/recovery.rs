@@ -54,7 +54,6 @@ impl LogRecovery {
         Ok(Some(LogRecovery { file, file_size }))
     }
 
-    /// Panics on fatal corruption (mid-log corruption, broken chain, etc).
     pub fn scan(mut self) -> Result<RecoveryOutcome, FatalError> {
         let mut hash_accumulator = GENESIS_HASH;
         let mut expected_index: u64 = 0;
@@ -119,7 +118,6 @@ impl LogRecovery {
             self.file.seek(SeekFrom::Start(scan_offset))?;
             let bytes_read = self.file.read(&mut header_buf)?;
 
-            // FORBIDDEN STATE F1: Sentinel without corresponding durable entry.
             if bytes_read >= SENTINEL_SIZE && is_sentinel_magic(&header_buf[0..4]) {
                 let mut sentinel_buf = [0u8; SENTINEL_SIZE];
                 sentinel_buf.copy_from_slice(&header_buf[0..SENTINEL_SIZE]);
@@ -140,7 +138,6 @@ impl LogRecovery {
                         base_prev_hash,
                     });
                 }
-                // F1 violation: sentinel without valid corresponding entry.
                 panic!(
                     "FATAL: Forbidden state F1 - Sentinel at offset {} claims index that doesn't match expected {}. \
                      Sentinel exists without valid corresponding entry.",
@@ -191,7 +188,6 @@ impl LogRecovery {
                 );
             }
 
-            // FATAL: Monotonicity violation
             if header.index != expected_index {
                 panic!(
                     "{}",
@@ -202,7 +198,6 @@ impl LogRecovery {
                 );
             }
 
-            // FATAL: Broken hash chain
             if header.prev_hash != hash_accumulator {
                 panic!(
                     "{}",
@@ -214,7 +209,6 @@ impl LogRecovery {
                 );
             }
 
-            // FATAL: View regression
             if header.view_id < highest_view {
                 panic!(
                     "{}",
@@ -281,7 +275,6 @@ impl LogRecovery {
         }
     }
 
-    /// Zero followed by non-zero = FATAL (zero hole).
     fn verify_zero_tail(
         &mut self,
         zero_offset: u64,
@@ -334,7 +327,6 @@ impl LogRecovery {
         }
     }
 
-    /// Torn write recovery: truncate if at tail with no valid headers ahead.
     fn handle_potential_torn_write(
         &mut self,
         failure_offset: u64,
@@ -345,7 +337,6 @@ impl LogRecovery {
         base_prev_hash: [u8; 16],
         _error: RecoverableError,
     ) -> Result<RecoveryOutcome, FatalError> {
-        // Mid-log corruption if valid header exists ahead.
         if self.has_valid_header_ahead(failure_offset, expected_index)? {
             panic!(
                 "{}",

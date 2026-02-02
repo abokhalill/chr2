@@ -8,46 +8,29 @@ use rand::Rng;
 
 use super::network::ChaosNetwork;
 
-/// Types of faults the Nemesis can inject.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fault {
-    /// Kill the current primary node.
     KillPrimary,
-    /// Partition the primary from a majority of backups.
     PartitionQuorum,
-    /// Heal all network issues.
     Heal,
-    /// No operation (do nothing this tick).
     Noop,
 }
 
-/// Record of a fault injection event.
 #[derive(Debug, Clone)]
 pub struct FaultEvent {
-    /// When the fault was injected.
     pub timestamp: Instant,
-    /// Type of fault.
     pub fault: Fault,
-    /// Target node (if applicable).
     pub target_node: Option<u32>,
-    /// Additional details.
     pub details: String,
 }
 
-/// Configuration for the Nemesis.
 #[derive(Debug, Clone)]
 pub struct NemesisConfig {
-    /// How often to consider injecting a fault.
     pub tick_interval: Duration,
-    /// Probability of injecting a fault on each tick (0.0 - 1.0).
     pub fault_probability: f64,
-    /// Weights for each fault type (KillPrimary, PartitionQuorum, Heal).
     pub fault_weights: [f64; 3],
-    /// Minimum time between faults.
     pub min_fault_interval: Duration,
-    /// Whether to automatically heal after some time.
     pub auto_heal: bool,
-    /// Time after which to auto-heal.
     pub auto_heal_delay: Duration,
 }
 
@@ -64,26 +47,17 @@ impl Default for NemesisConfig {
     }
 }
 
-/// The Nemesis fault injector.
 pub struct Nemesis {
-    /// Reference to the chaos network.
     network: Arc<ChaosNetwork>,
-    /// Configuration.
     config: NemesisConfig,
-    /// Current view (tracked for primary targeting).
     current_view: Arc<AtomicU64>,
-    /// Whether the nemesis is running.
     running: Arc<AtomicBool>,
-    /// History of fault events.
     history: Arc<std::sync::Mutex<Vec<FaultEvent>>>,
-    /// Last fault injection time.
     last_fault_time: Arc<std::sync::Mutex<Option<Instant>>>,
-    /// Last non-heal fault time (for auto-heal).
     last_disruption_time: Arc<std::sync::Mutex<Option<Instant>>>,
 }
 
 impl Nemesis {
-    /// Create a new Nemesis.
     pub fn new(network: Arc<ChaosNetwork>, config: NemesisConfig) -> Self {
         Nemesis {
             network,
@@ -96,17 +70,9 @@ impl Nemesis {
         }
     }
 
-    /// Update the current view (call this when view changes are detected).
-    pub fn set_view(&self, view: u64) {
-        self.current_view.store(view, Ordering::SeqCst);
-    }
+    pub fn set_view(&self, view: u64) { self.current_view.store(view, Ordering::SeqCst); }
+    pub fn get_view(&self) -> u64 { self.current_view.load(Ordering::SeqCst) }
 
-    /// Get the current view.
-    pub fn get_view(&self) -> u64 {
-        self.current_view.load(Ordering::SeqCst)
-    }
-
-    /// Start the nemesis thread.
     pub fn start(&self) -> thread::JoinHandle<()> {
         self.running.store(true, Ordering::SeqCst);
 
@@ -175,33 +141,17 @@ impl Nemesis {
         })
     }
 
-    /// Stop the nemesis.
-    pub fn stop(&self) {
-        self.running.store(false, Ordering::SeqCst);
-    }
+    pub fn stop(&self) { self.running.store(false, Ordering::SeqCst); }
+    pub fn is_running(&self) -> bool { self.running.load(Ordering::SeqCst) }
 
-    /// Check if the nemesis is running.
-    pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
-    }
-
-    /// Manually inject a specific fault.
     pub fn inject(&self, fault: Fault) {
         let view = self.current_view.load(Ordering::SeqCst);
         Self::inject_fault_static(&self.network, fault, view, &self.history);
     }
 
-    /// Get the fault history.
-    pub fn get_history(&self) -> Vec<FaultEvent> {
-        self.history.lock().unwrap().clone()
-    }
+    pub fn get_history(&self) -> Vec<FaultEvent> { self.history.lock().unwrap().clone() }
+    pub fn clear_history(&self) { self.history.lock().unwrap().clear(); }
 
-    /// Clear the fault history.
-    pub fn clear_history(&self) {
-        self.history.lock().unwrap().clear();
-    }
-
-    /// Choose a fault type based on weights.
     fn choose_fault(weights: &[f64; 3], rng: &mut impl Rng) -> Fault {
         let total: f64 = weights.iter().sum();
         let mut r = rng.gen::<f64>() * total;
@@ -218,7 +168,6 @@ impl Nemesis {
         Fault::Heal
     }
 
-    /// Inject a fault (static version for thread).
     fn inject_fault_static(
         network: &ChaosNetwork,
         fault: Fault,

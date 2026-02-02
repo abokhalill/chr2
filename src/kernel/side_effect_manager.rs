@@ -124,7 +124,6 @@ impl InFlightTracker {
     }
 }
 
-/// Side effect manager with epoch-based fencing tied to Manifest.highest_view.
 /// lease_epoch must equal durable_epoch to execute effects.
 pub struct SideEffectManager {
     config: SideEffectManagerConfig,
@@ -161,7 +160,6 @@ impl SideEffectManager {
         }
     }
 
-    /// Use when recovering from Manifest.
     pub fn with_durable_epoch(
         config: SideEffectManagerConfig,
         executor: EffectExecutor,
@@ -182,7 +180,6 @@ impl SideEffectManager {
         }
     }
 
-    /// Advance epoch, invalidating any outstanding lease.
     pub fn advance_durable_epoch(&self, new_epoch: DurableEpoch) {
         let mut cur = self.durable_epoch.load(Ordering::SeqCst);
         while new_epoch.get() > cur {
@@ -226,7 +223,6 @@ impl SideEffectManager {
         self.set_primary_with_epoch(is_primary, epoch);
     }
 
-    /// True iff is_primary AND lease_epoch == durable_epoch.
     pub fn is_primary(&self) -> bool {
         if !self.is_primary.load(Ordering::SeqCst) { return false; }
         self.lease_epoch.load(Ordering::SeqCst) == self.durable_epoch.load(Ordering::SeqCst)
@@ -241,7 +237,6 @@ impl SideEffectManager {
         if lease == INVALID_LEASE { None } else { Some(DurableEpoch(lease)) }
     }
 
-    /// Process pending effects in deterministic order. Checks epoch before/after execution.
     pub fn process_pending(&self, outbox: &Outbox) -> usize {
         if !self.is_primary() { return 0; }
 

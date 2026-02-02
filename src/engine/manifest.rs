@@ -3,41 +3,18 @@ use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 
-/// Manifest file magic bytes: "CMAN" (Chronon MANifest)
 pub const MANIFEST_MAGIC: [u8; 4] = [0x50, 0x4D, 0x41, 0x4E];
-
-/// Current manifest format version
 pub const MANIFEST_VERSION: u32 = 1;
-
-/// Manifest file size (64 bytes, cache-line aligned)
 pub const MANIFEST_SIZE: usize = 64;
-
-/// Sentinel value for "no vote cast"
 pub const NO_VOTE_NODE: u32 = u32::MAX;
 
-/// Durable consensus state.
-///
-/// This struct represents the consensus fencing state that MUST be
-/// persisted before certain protocol actions.
+/// Consensus fencing state. Must be durable before protocol actions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DurableState {
-    /// Highest view number ever observed.
-    /// Used to reject stale messages from zombie leaders.
     pub highest_view: u64,
-
-    /// View number we voted in (0 = no vote).
-    /// Once we vote in view V, we cannot vote for a different node in V.
     pub voted_for_view: u64,
-
-    /// Node ID we voted for (NO_VOTE_NODE = no vote).
     pub voted_for_node: u32,
-
-    /// Last log index at time of manifest write.
-    /// Used for leader election tiebreaking.
     pub last_log_index: u64,
-
-    /// View of the last log entry.
-    /// Used for leader election tiebreaking.
     pub last_log_view: u64,
 }
 
@@ -54,12 +31,10 @@ impl Default for DurableState {
 }
 
 impl DurableState {
-    /// Create a new empty durable state.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Serialize to bytes.
     pub fn to_bytes(&self) -> [u8; MANIFEST_SIZE] {
         let mut bytes = [0u8; MANIFEST_SIZE];
 
@@ -78,7 +53,7 @@ impl DurableState {
         // voted_for_node (24..28)
         bytes[24..28].copy_from_slice(&self.voted_for_node.to_le_bytes());
 
-        // reserved_align (28..32) - zeros
+        // you get the picture
 
         // last_log_index (32..40)
         bytes[32..40].copy_from_slice(&self.last_log_index.to_le_bytes());
@@ -95,8 +70,6 @@ impl DurableState {
         bytes
     }
 
-    /// Deserialize from bytes.
-    /// Returns None if magic/version/checksum validation fails.
     pub fn from_bytes(bytes: &[u8; MANIFEST_SIZE]) -> Option<Self> {
         // Verify magic
         if bytes[0..4] != MANIFEST_MAGIC {
@@ -144,8 +117,6 @@ impl DurableState {
         })
     }
 
-    /// Check if we can accept a message from the given view.
-    /// Returns Err with the reason if the message should be rejected.
     #[inline]
     pub fn check_view_fence(&self, msg_view: u64) -> Result<(), ViewFenceError> {
         if msg_view < self.highest_view {
@@ -158,8 +129,6 @@ impl DurableState {
         }
     }
 
-    /// Check if we can vote for a node in the given view.
-    /// Returns Err if we've already voted for a different node in this view.
     #[inline]
     pub fn check_vote_fence(&self, view: u64, candidate: u32) -> Result<(), VoteFenceError> {
         if self.voted_for_view == view && self.voted_for_node != NO_VOTE_NODE {
@@ -175,10 +144,8 @@ impl DurableState {
     }
 }
 
-/// Error when view fencing check fails.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewFenceError {
-    /// Message view is lower than our highest seen view.
     StaleView { msg_view: u64, highest_view: u64 },
 }
 
@@ -201,10 +168,8 @@ impl std::fmt::Display for ViewFenceError {
 
 impl std::error::Error for ViewFenceError {}
 
-/// Error when vote fencing check fails.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VoteFenceError {
-    /// Already voted for a different node in this view.
     AlreadyVoted {
         view: u64,
         voted_for: u32,
@@ -232,23 +197,14 @@ impl std::fmt::Display for VoteFenceError {
 
 impl std::error::Error for VoteFenceError {}
 
-/// Manifest file manager with atomic persistence.
-///
-/// This struct manages the durable state file with crash-safe updates.
-/// All updates use write-tmp-fsync-rename-fsync-dir pattern.
+/// Crash-safe via write-tmp-fsync-rename-fsync-dir.
 #[derive(Debug)]
 pub struct Manifest {
-    /// Path to the manifest file.
     path: PathBuf,
-    /// Current in-memory state.
     state: DurableState,
 }
 
 impl Manifest {
-    /// Open or create a manifest file.
-    ///
-    /// If the file exists, loads and validates it.
-    /// If the file doesn't exist, creates a new empty manifest.
     pub fn open(path: &Path) -> io::Result<Self> {
         if path.exists() {
             // Load existing manifest
@@ -278,34 +234,26 @@ impl Manifest {
         }
     }
 
-    /// Get the current durable state.
     #[inline]
     pub fn state(&self) -> &DurableState {
         &self.state
     }
 
-    /// Get the highest view ever seen.
     #[inline]
     pub fn highest_view(&self) -> u64 {
         self.state.highest_view
     }
 
-    /// Check view fence for an incoming message.
     #[inline]
     pub fn check_view_fence(&self, msg_view: u64) -> Result<(), ViewFenceError> {
         self.state.check_view_fence(msg_view)
     }
 
-    /// Check vote fence for a view change vote.
     #[inline]
     pub fn check_vote_fence(&self, view: u64, candidate: u32) -> Result<(), VoteFenceError> {
         self.state.check_vote_fence(view, candidate)
     }
 
-    /// Update highest_view if the new view is higher.
-    /// Persists atomically before returning.
-    ///
-    /// Returns true if the view was updated, false if already at or above.
     pub fn advance_view(&mut self, new_view: u64) -> io::Result<bool> {
         if new_view <= self.state.highest_view {
             return Ok(false);
@@ -321,11 +269,6 @@ impl Manifest {
         Ok(true)
     }
 
-    /// Record a vote for a node in a view.
-    /// Persists atomically before returning.
-    ///
-    /// # Errors
-    /// Returns error if we've already voted for a different node in this view.
     pub fn record_vote(&mut self, view: u64, node_id: u32) -> io::Result<()> {
         // Check fence first
         self.state
@@ -344,21 +287,15 @@ impl Manifest {
         self.persist()
     }
 
-    /// Update log position tracking.
-    /// Should be called after log writes to keep manifest in sync.
     pub fn update_log_position(&mut self, last_index: u64, last_view: u64) -> io::Result<()> {
         self.state.last_log_index = last_index;
         self.state.last_log_view = last_view;
         self.persist()
     }
 
-    /// Persist the current state atomically.
-    ///
-    /// Uses write-tmp-fsync-rename-fsync-dir pattern for crash safety.
     fn persist(&self) -> io::Result<()> {
         let tmp_path = self.path.with_extension("chr.tmp");
 
-        // Step 1: Write to temporary file
         {
             let mut tmp_file = OpenOptions::new()
                 .write(true)
@@ -366,24 +303,18 @@ impl Manifest {
                 .truncate(true)
                 .open(&tmp_path)?;
 
-            let bytes = self.state.to_bytes();
-            tmp_file.write_all(&bytes)?;
+            tmp_file.write_all(&self.state.to_bytes())?;
 
-            // Step 2: fdatasync the temporary file
-            // SAFETY: fdatasync is a standard POSIX syscall
             let result = unsafe { libc::fdatasync(tmp_file.as_raw_fd()) };
             if result < 0 {
                 return Err(io::Error::last_os_error());
             }
         }
 
-        // Step 3: Atomic rename
         fs::rename(&tmp_path, &self.path)?;
 
-        // Step 4: fsync the directory
         if let Some(parent) = self.path.parent() {
             if let Ok(dir) = File::open(parent) {
-                // SAFETY: fsync is a standard POSIX syscall
                 unsafe { libc::fsync(dir.as_raw_fd()) };
             }
         }
@@ -392,18 +323,6 @@ impl Manifest {
     }
 }
 
-/// Recovery helper: validate manifest against log state.
-///
-/// This should be called during node startup after log recovery.
-/// It ensures the manifest's view fencing is consistent with the log.
-///
-/// # Invariants Checked
-/// 1. `manifest.highest_view >= log_highest_view` - manifest must not be behind log
-/// 2. If manifest is ahead, that's OK (we may have seen a higher view via messages)
-///
-/// # Returns
-/// - `Ok(())` if validation passes
-/// - `Err(reason)` if there's a fatal inconsistency
 pub fn validate_manifest_against_log(
     manifest: &DurableState,
     log_highest_view: u64,
@@ -433,30 +352,14 @@ pub fn validate_manifest_against_log(
     Ok(())
 }
 
-/// Recovery outcome with manifest state.
 #[derive(Debug)]
 pub struct RecoveryWithManifest {
-    /// The loaded/created manifest.
     pub manifest: Manifest,
-    /// Whether the manifest was newly created (vs loaded from disk).
     pub was_created: bool,
-    /// The durable highest view from the manifest.
     pub highest_view: u64,
 }
 
 impl Manifest {
-    /// Open manifest for recovery, optionally updating it with log state.
-    ///
-    /// This is the recommended way to open a manifest during node startup.
-    /// It handles the case where the manifest doesn't exist yet.
-    ///
-    /// # Arguments
-    /// * `path` - Path to the manifest file
-    /// * `log_highest_view` - Highest view found in the log during recovery
-    /// * `log_last_index` - Last index found in the log during recovery
-    ///
-    /// # Returns
-    /// The manifest with updated state, or error if validation fails.
     pub fn open_for_recovery(
         path: &Path,
         log_highest_view: u64,

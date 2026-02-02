@@ -11,14 +11,10 @@ use rand::Rng;
 
 use crate::vsr::message::VsrMessage;
 
-/// Configuration for chaos network behavior.
 #[derive(Debug, Clone)]
 pub struct ChaosConfig {
-    /// Probability of dropping a packet (0.0 - 1.0).
     pub drop_rate: f64,
-    /// Range of latency to inject per packet.
     pub latency_range: (Duration, Duration),
-    /// Whether chaos effects are enabled.
     pub enabled: bool,
 }
 
@@ -32,31 +28,20 @@ impl Default for ChaosConfig {
     }
 }
 
-/// A chaos-enabled network endpoint for a single node.
 #[allow(dead_code)]
 pub struct ChaosEndpoint {
-    /// This node's ID.
     pub node_id: u32,
-    /// Receiver for incoming messages (after chaos processing).
     rx: Receiver<(u32, VsrMessage)>,
-    /// Sender to the chaos processor.
     tx_to_chaos: Sender<(u32, u32, VsrMessage)>,
-    /// Connection status to each node.
     connected: HashMap<u32, Arc<AtomicBool>>,
-    /// Partition map (shared with ChaosNetwork).
     partition_map: Arc<RwLock<HashSet<(u32, u32)>>>,
-    /// Whether this node is "killed".
     killed: Arc<AtomicBool>,
-    /// Chaos configuration.
     config: Arc<RwLock<ChaosConfig>>,
-    /// Statistics: messages sent.
     pub messages_sent: Arc<AtomicU64>,
-    /// Statistics: messages dropped.
     pub messages_dropped: Arc<AtomicU64>,
 }
 
 impl ChaosEndpoint {
-    /// Send a message to a specific node.
     pub fn send_to(&self, target_id: u32, msg: VsrMessage) -> bool {
         // Check if this node is killed
         if self.killed.load(Ordering::SeqCst) {
@@ -86,7 +71,6 @@ impl ChaosEndpoint {
             .is_ok()
     }
 
-    /// Broadcast a message to all other nodes.
     pub fn broadcast(&self, msg: VsrMessage) -> usize {
         if self.killed.load(Ordering::SeqCst) {
             return 0;
@@ -101,64 +85,38 @@ impl ChaosEndpoint {
         count
     }
 
-    /// Try to receive a message (non-blocking).
     pub fn try_recv(&self) -> Option<(u32, VsrMessage)> {
-        if self.killed.load(Ordering::SeqCst) {
-            return None;
-        }
+        if self.killed.load(Ordering::SeqCst) { return None; }
         self.rx.try_recv().ok()
     }
 
-    /// Receive a message (blocking).
     pub fn recv(&self) -> Option<(u32, VsrMessage)> {
-        if self.killed.load(Ordering::SeqCst) {
-            return None;
-        }
+        if self.killed.load(Ordering::SeqCst) { return None; }
         self.rx.recv().ok()
     }
 
-    /// Receive with timeout.
     pub fn recv_timeout(&self, timeout: Duration) -> Option<(u32, VsrMessage)> {
-        if self.killed.load(Ordering::SeqCst) {
-            return None;
-        }
+        if self.killed.load(Ordering::SeqCst) { return None; }
         self.rx.recv_timeout(timeout).ok()
     }
 
-    /// Check if this node is killed.
-    pub fn is_killed(&self) -> bool {
-        self.killed.load(Ordering::SeqCst)
-    }
+    pub fn is_killed(&self) -> bool { self.killed.load(Ordering::SeqCst) }
 }
 
-/// Chaos-enabled mock network.
 pub struct ChaosNetwork {
-    /// Number of nodes in the network.
     cluster_size: u32,
-    /// Connection status between nodes.
     connections: HashMap<(u32, u32), Arc<AtomicBool>>,
-    /// Partition map: set of (from, to) pairs that cannot communicate.
     partition_map: Arc<RwLock<HashSet<(u32, u32)>>>,
-    /// Chaos configuration.
     config: Arc<RwLock<ChaosConfig>>,
-    /// Senders to each node's inbox (after chaos processing).
-    /// Wrapped in `Arc<RwLock>` for sharing with processor thread and updating on revive.
     node_senders: Arc<RwLock<HashMap<u32, Sender<(u32, VsrMessage)>>>>,
-    /// Receivers for each node's inbox (taken when endpoint is created).
-    /// Wrapped in Mutex for interior mutability when used via Arc.
     node_receivers: Mutex<HashMap<u32, Receiver<(u32, VsrMessage)>>>,
-    /// Sender to the chaos processor thread.
     chaos_tx: Sender<(u32, u32, VsrMessage)>,
-    /// Kill flags for each node.
     kill_flags: HashMap<u32, Arc<AtomicBool>>,
-    /// Statistics per node.
     node_stats: HashMap<u32, (Arc<AtomicU64>, Arc<AtomicU64>)>,
-    /// Handle to the chaos processor thread.
     _processor_handle: Option<thread::JoinHandle<()>>,
 }
 
 impl ChaosNetwork {
-    /// Create a new chaos network with the specified number of nodes.
     pub fn new(cluster_size: u32, config: ChaosConfig) -> Self {
         let mut node_senders_map = HashMap::new();
         let mut node_receivers = HashMap::new();
@@ -223,7 +181,6 @@ impl ChaosNetwork {
         }
     }
 
-    /// Chaos processor thread with shared senders map (for revive support).
     fn chaos_processor_shared(
         rx: Receiver<(u32, u32, VsrMessage)>,
         senders: Arc<RwLock<HashMap<u32, Sender<(u32, VsrMessage)>>>>,
@@ -281,8 +238,6 @@ impl ChaosNetwork {
         }
     }
 
-    /// Create a chaos-enabled network endpoint for a specific node.
-    /// Uses interior mutability so it can be called via Arc.
     pub fn create_endpoint(&self, node_id: u32) -> Option<ChaosEndpoint> {
         let rx = self.node_receivers.lock().ok()?.remove(&node_id)?;
 
@@ -309,7 +264,6 @@ impl ChaosNetwork {
         })
     }
 
-    /// Disconnect a node from the network.
     pub fn disconnect(&self, node_id: u32) {
         for (&(from, to), flag) in &self.connections {
             if from == node_id || to == node_id {
@@ -318,7 +272,6 @@ impl ChaosNetwork {
         }
     }
 
-    /// Reconnect a node to the network.
     pub fn reconnect(&self, node_id: u32) {
         for (&(from, to), flag) in &self.connections {
             if from == node_id || to == node_id {
@@ -327,7 +280,6 @@ impl ChaosNetwork {
         }
     }
 
-    /// Kill a node (stops all message processing).
     pub fn kill_node(&self, node_id: u32) {
         if let Some(flag) = self.kill_flags.get(&node_id) {
             flag.store(true, Ordering::SeqCst);
@@ -335,7 +287,6 @@ impl ChaosNetwork {
         self.disconnect(node_id);
     }
 
-    /// Revive a killed node.
     pub fn revive_node(&self, node_id: u32) {
         if let Some(flag) = self.kill_flags.get(&node_id) {
             flag.store(false, Ordering::SeqCst);
@@ -343,8 +294,6 @@ impl ChaosNetwork {
         self.reconnect(node_id);
     }
 
-    /// Recreate an endpoint for a node (used when reviving).
-    /// This creates a new channel for the node and updates the processor's senders map.
     pub fn recreate_endpoint(&self, node_id: u32) -> Option<ChaosEndpoint> {
         // Create a new channel for this node
         let (tx, rx) = unbounded();
@@ -365,21 +314,18 @@ impl ChaosNetwork {
         self.create_endpoint(node_id)
     }
 
-    /// Add a network partition between two nodes.
     pub fn partition(&self, from: u32, to: u32) {
         let mut partitions = self.partition_map.write().unwrap();
         partitions.insert((from, to));
         partitions.insert((to, from)); // Bidirectional
     }
 
-    /// Remove a network partition between two nodes.
     pub fn heal_partition(&self, from: u32, to: u32) {
         let mut partitions = self.partition_map.write().unwrap();
         partitions.remove(&(from, to));
         partitions.remove(&(to, from));
     }
 
-    /// Heal all partitions.
     pub fn heal_all(&self) {
         let mut partitions = self.partition_map.write().unwrap();
         partitions.clear();
@@ -390,23 +336,13 @@ impl ChaosNetwork {
         }
     }
 
-    /// Update chaos configuration.
     pub fn set_config(&self, new_config: ChaosConfig) {
-        let mut config = self.config.write().unwrap();
-        *config = new_config;
+        *self.config.write().unwrap() = new_config;
     }
 
-    /// Get current chaos configuration.
-    pub fn get_config(&self) -> ChaosConfig {
-        self.config.read().unwrap().clone()
-    }
+    pub fn get_config(&self) -> ChaosConfig { self.config.read().unwrap().clone() }
+    pub fn cluster_size(&self) -> u32 { self.cluster_size }
 
-    /// Get cluster size.
-    pub fn cluster_size(&self) -> u32 {
-        self.cluster_size
-    }
-
-    /// Check if a node is killed.
     pub fn is_killed(&self, node_id: u32) -> bool {
         self.kill_flags
             .get(&node_id)
@@ -414,7 +350,6 @@ impl ChaosNetwork {
             .unwrap_or(false)
     }
 
-    /// Get the current primary for a view (for nemesis targeting).
     pub fn primary_for_view(&self, view: u64) -> u32 {
         (view % self.cluster_size as u64) as u32
     }

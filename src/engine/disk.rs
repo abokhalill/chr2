@@ -1,5 +1,3 @@
-//! Unified durability abstraction. Writes are speculative until barrier().
-
 use std::io;
 
 use crate::engine::errors::FatalError;
@@ -67,7 +65,6 @@ impl LogEntry {
     }
 }
 
-/// Single-writer durability contract. barrier() is the only durability operation.
 pub trait VirtualDisk: Send {
     fn submit_write(&mut self, entry: LogEntry) -> io::Result<WriteToken>;
     fn submit_write_batch(&mut self, entries: &[LogEntry]) -> io::Result<WriteToken>;
@@ -83,7 +80,6 @@ pub trait VirtualDisk: Send {
     fn truncate(&mut self, len: u64) -> io::Result<()>;
 }
 
-/// O_DSYNC wrapper. Each pwritev is implicitly a barrier.
 #[allow(dead_code)]
 pub struct SyncDisk {
     writer: crate::engine::log::LogWriter,
@@ -165,8 +161,6 @@ impl VirtualDisk for SyncDisk {
     }
 
     fn barrier(&mut self, up_to: WriteToken) -> Result<BarrierResult, FatalError> {
-        // With O_DSYNC, writes are already durable. The barrier is a no-op
-        // but we verify the token is valid and return the result.
         let committed = self.writer.committed_index();
 
         // Verify the requested token is actually committed
@@ -174,11 +168,10 @@ impl VirtualDisk for SyncDisk {
             Some(idx) if idx >= up_to.index() => {
                 Ok(BarrierResult {
                     durable_index: idx,
-                    entries_synced: 0, // Already synced by O_DSYNC
+                    entries_synced: 0,
                 })
             }
             Some(idx) => {
-                // This shouldn't happen with O_DSYNC - writes should be durable on return
                 Err(FatalError::IoError(io::Error::new(
                     io::ErrorKind::Other,
                     format!(
@@ -190,7 +183,6 @@ impl VirtualDisk for SyncDisk {
             }
             None => {
                 if up_to.index() == 0 {
-                    // Edge case: barrier on first entry before any writes
                     Err(FatalError::IoError(io::Error::new(
                         io::ErrorKind::Other,
                         "No entries committed yet",
@@ -211,13 +203,10 @@ impl VirtualDisk for SyncDisk {
     fn barrier_all(&mut self) -> Result<BarrierResult, FatalError> {
         match self.highest_submitted {
             Some(token) => self.barrier(token),
-            None => {
-                // No writes submitted, return current state
-                Ok(BarrierResult {
-                    durable_index: self.writer.committed_index().unwrap_or(0),
-                    entries_synced: 0,
-                })
-            }
+            None => Ok(BarrierResult {
+                durable_index: self.writer.committed_index().unwrap_or(0),
+                entries_synced: 0,
+            }),
         }
     }
 
@@ -238,9 +227,6 @@ impl VirtualDisk for SyncDisk {
     }
 
     fn set_view_id(&mut self, _view_id: u64) {
-        // LogWriter doesn't support changing view_id after creation.
-        // This would require reopening the file or adding a setter.
-        // For now, this is a limitation we document.
         unimplemented!("LogWriter does not support changing view_id after creation")
     }
 
@@ -345,7 +331,6 @@ mod tests {
     }
 }
 
-/// io_uring async wrapper. Writes are speculative until barrier().
 #[cfg(feature = "io_uring")]
 pub struct IoUringDisk {
     writer: crate::engine::uring::IoUringWriter,

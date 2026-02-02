@@ -1,6 +1,3 @@
-//! Replicated SessionMap for exactly-once client request semantics.
-//! Survives primary crashes via snapshot serialization. BTreeMap for determinism.
-
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -97,39 +94,20 @@ impl ReplicatedSessionMap {
             }
             Some(session) => {
                 if sequence_number > session.highest_sequence {
-                    // New request (possibly with gap - we allow this for pipelining)
                     SessionCheckResult::New
                 } else if sequence_number == session.highest_sequence {
-                    // Duplicate of the last request
                     if let Some(ref cached) = session.cached_response {
                         if cached.sequence_number == sequence_number {
                             SessionCheckResult::Duplicate(ClientResponse {
                                 sequence_number,
                                 result: cached.result.clone().into(),
                             })
-                        } else {
-                            // Cache mismatch - treat as new (shouldn't happen)
-                            SessionCheckResult::New
-                        }
-                    } else {
-                        // No cached response - treat as new (shouldn't happen)
-                        SessionCheckResult::New
-                    }
+                        } else { SessionCheckResult::New }
+                    } else { SessionCheckResult::New }
                 } else if sequence_number < session.lowest_retained {
-                    // Ancient request - reject
-                    SessionCheckResult::Stale {
-                        sequence: sequence_number,
-                        lowest: session.lowest_retained,
-                    }
+                    SessionCheckResult::Stale { sequence: sequence_number, lowest: session.lowest_retained }
                 } else {
-                    // Request in the window but not the highest - this is a retry
-                    // of an older request. We don't cache all responses, so we
-                    // must reject with an error indicating the client should
-                    // use a higher sequence number.
-                    SessionCheckResult::OutOfOrder {
-                        sequence: sequence_number,
-                        expected: session.highest_sequence + 1,
-                    }
+                    SessionCheckResult::OutOfOrder { sequence: sequence_number, expected: session.highest_sequence + 1 }
                 }
             }
         }
@@ -151,17 +129,10 @@ impl ReplicatedSessionMap {
             }
         });
 
-        // Only update if this is a new highest sequence
         if sequence_number > session.highest_sequence {
             session.highest_sequence = sequence_number;
-            
-            // Update the window
             let new_lowest = sequence_number.saturating_sub(self.config.window_size);
-            if new_lowest > session.lowest_retained {
-                session.lowest_retained = new_lowest;
-            }
-
-            // Cache the response
+            if new_lowest > session.lowest_retained { session.lowest_retained = new_lowest; }
             session.cached_response = Some(CachedResponse {
                 sequence_number,
                 log_index,
@@ -170,24 +141,12 @@ impl ReplicatedSessionMap {
         }
     }
 
-    /// Deterministic GC: evict oldest clients when over max_clients.
     pub fn gc(&mut self, _current_log_index: u64) -> usize {
         let max_clients = self.config.max_clients;
-        
-        if self.sessions.len() <= max_clients {
-            return 0;
-        }
+        if self.sessions.len() <= max_clients { return 0; }
 
-        // Evict oldest clients (by lowest highest_sequence)
-        let mut clients: Vec<_> = self.sessions
-            .iter()
-            .map(|(id, s)| (*id, s.highest_sequence))
-            .collect();
-        
-        // Sort by highest_sequence (oldest first)
+        let mut clients: Vec<_> = self.sessions.iter().map(|(id, s)| (*id, s.highest_sequence)).collect();
         clients.sort_by_key(|(_, seq)| *seq);
-
-        // Evict until we're under the limit
         let to_evict = self.sessions.len() - max_clients;
         let mut evicted = 0;
         
@@ -210,7 +169,6 @@ impl ReplicatedSessionMap {
     #[cfg(test)]
     pub fn clear(&mut self) { self.sessions.clear(); }
 
-    /// Merge (take max highest_sequence per client).
     pub fn merge(&mut self, other: &ReplicatedSessionMap) {
         for (client_id, other_session) in &other.sessions {
             match self.sessions.get_mut(client_id) {

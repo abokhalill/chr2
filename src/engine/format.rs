@@ -101,31 +101,19 @@ impl LogHeader {
         header
     }
 
-    /// Compute CRC32C of header bytes [4..79].
-    /// Per log_format.md: Polynomial 0x1EDC6F41, Initial 0xFFFFFFFF, Final XOR 0xFFFFFFFF.
     pub fn compute_checksum(&self) -> u32 {
-        let bytes = self.as_bytes();
-        // CRC32C of bytes [4..80] (excluding the checksum field itself)
-        crc32c::crc32c(&bytes[4..])
+        crc32c::crc32c(&self.as_bytes()[4..])
     }
 
-    /// Verify the header checksum.
     pub fn verify_checksum(&self) -> bool {
         self.header_checksum == self.compute_checksum()
     }
 
-    /// Convert header to raw bytes.
-    ///
-    /// # Safety
-    /// LogHeader is #[repr(C)] with no padding, so this is safe.
+    /// SAFETY: #[repr(C)], 80 bytes, no padding.
     pub fn as_bytes(&self) -> &[u8; HEADER_SIZE] {
-        // SAFETY: LogHeader is #[repr(C)], exactly 80 bytes, no padding.
-        // The struct layout matches the on-disk format exactly.
         unsafe { &*(self as *const LogHeader as *const [u8; HEADER_SIZE]) }
     }
 
-    /// Create header from raw bytes.
-    /// Reads fields in little-endian order per log_format.md.
     pub fn from_bytes(bytes: &[u8; HEADER_SIZE]) -> Self {
         let mut header = LogHeader {
             header_checksum: 0,
@@ -177,7 +165,6 @@ pub fn compute_payload_hash(payload: &[u8]) -> [u8; 16] {
     truncated
 }
 
-/// BLAKE3(Header[4..80] || Payload)[0..16]
 pub fn compute_chain_hash(header: &LogHeader, payload: &[u8]) -> [u8; 16] {
     let header_bytes = header.as_bytes();
     let mut hasher = blake3::Hasher::new();
@@ -197,7 +184,6 @@ pub const LOG_METADATA_SIZE: usize = 64;
 pub const LOG_MAGIC: [u8; 4] = [0x50, 0x4C, 0x4F, 0x47];
 pub const LOG_VERSION: u32 = 1;
 
-/// 64-byte header at file start. base_index=0 for fresh logs, snapshot+1 for truncated.
 #[derive(Clone, Copy, Debug)]
 pub struct LogMetadata {
     pub magic: [u8; 4],

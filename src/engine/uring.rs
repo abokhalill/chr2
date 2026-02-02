@@ -1081,7 +1081,7 @@ mod tests {
     fn test_dma_buffer_pool() {
         let mut pool = DmaBufferPool::new(DEFAULT_DMA_BUFFER_SIZE, 4);
 
-        // Acquire some buffers
+        // come here baby
         let buf1 = pool.acquire(1000).unwrap();
         let buf2 = pool.acquire(1000).unwrap();
 
@@ -1090,14 +1090,14 @@ mod tests {
         assert_eq!(hits, 0);
         assert_eq!(free, 0);
 
-        // Release buffers back to pool
+        // aight we're done
         pool.release(buf1);
         pool.release(buf2);
 
         let (_, _, free) = pool.stats();
         assert_eq!(free, 2);
 
-        // Acquire again - should reuse from pool
+        // come back
         let _buf3 = pool.acquire(1000).unwrap();
 
         let (allocs, hits, _) = pool.stats();

@@ -172,7 +172,6 @@ pub struct OutboxEntry {
     pub created_at_index: u64,
 }
 
-/// Durable outbox. BTreeMap for deterministic iteration order across replicas.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Outbox {
     entries: BTreeMap<EffectId, OutboxEntry>,
@@ -195,7 +194,6 @@ impl Outbox {
         false
     }
 
-    /// Returns pending effects in deterministic EffectId order.
     pub fn pending_effects(&self) -> Vec<(EffectId, &OutboxEntry)> {
         self.entries.iter()
             .filter(|(_, entry)| entry.status == SideEffectStatus::Pending)

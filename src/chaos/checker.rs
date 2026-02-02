@@ -4,56 +4,34 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-/// Types of operations that can be recorded.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Operation {
-    /// Deposit operation.
     Deposit { user: String, amount: u64 },
-    /// Withdrawal operation.
     Withdrawal { user: String, amount: u64 },
-    /// Balance query.
     Query { user: String },
 }
 
-/// Result of an operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OperationResult {
-    /// Operation succeeded.
-    Success {
-        /// For queries, this is the balance. For deposits/withdrawals, this is the new balance.
-        balance: Option<u64>,
-    },
-    /// Operation failed.
+    Success { balance: Option<u64> },
     Failure { reason: String },
-    /// Operation is pending (not yet committed).
     Pending,
-    /// Operation was redirected to another node.
     Redirected { to_node: Option<u32> },
 }
 
-/// A single entry in the operation history.
 #[derive(Debug, Clone)]
 pub struct HistoryEntry {
-    /// When the operation was initiated.
     pub timestamp: Instant,
-    /// Client that initiated the operation.
     pub client_id: u64,
-    /// Sequence number for this client.
     pub sequence_number: u64,
-    /// The operation performed.
     pub operation: Operation,
-    /// The result of the operation.
     pub result: OperationResult,
-    /// Log index where this was committed (if applicable).
     pub log_index: Option<u64>,
 }
 
-/// Global history log for all operations.
 #[derive(Debug, Default)]
 pub struct History {
-    /// All recorded entries.
     entries: Vec<HistoryEntry>,
-    /// Index by client_id and sequence_number.
     by_client: HashMap<(u64, u64), usize>,
 }
 
@@ -92,44 +70,29 @@ impl History {
         &self.entries
     }
 
-    /// Get entry by client and sequence number.
     pub fn get(&self, client_id: u64, sequence_number: u64) -> Option<&HistoryEntry> {
         self.by_client
             .get(&(client_id, sequence_number))
             .and_then(|&idx| self.entries.get(idx))
     }
 
-    /// Get the number of entries.
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Check if history is empty.
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    /// Clear all entries.
+    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
     pub fn clear(&mut self) {
         self.entries.clear();
         self.by_client.clear();
     }
 }
 
-/// Thread-safe history wrapper.
 pub struct SharedHistory {
     inner: Arc<Mutex<History>>,
 }
 
 impl SharedHistory {
-    /// Create a new shared history.
     pub fn new() -> Self {
-        SharedHistory {
-            inner: Arc::new(Mutex::new(History::new())),
-        }
+        SharedHistory { inner: Arc::new(Mutex::new(History::new())) }
     }
 
-    /// Record an operation.
     pub fn record(
         &self,
         client_id: u64,
@@ -142,36 +105,15 @@ impl SharedHistory {
         history.record(client_id, sequence_number, operation, result, log_index);
     }
 
-    /// Get a clone of the inner history for analysis.
     pub fn snapshot(&self) -> History {
         let history = self.inner.lock().unwrap();
-        History {
-            entries: history.entries.clone(),
-            by_client: history.by_client.clone(),
-        }
+        History { entries: history.entries.clone(), by_client: history.by_client.clone() }
     }
 
-    /// Get the number of entries.
-    pub fn len(&self) -> usize {
-        self.inner.lock().unwrap().len()
-    }
-
-    /// Check if history is empty.
-    pub fn is_empty(&self) -> bool {
-        self.inner.lock().unwrap().is_empty()
-    }
-
-    /// Clear all entries.
-    pub fn clear(&self) {
-        self.inner.lock().unwrap().clear();
-    }
-
-    /// Clone the Arc for sharing.
-    pub fn clone_arc(&self) -> Self {
-        SharedHistory {
-            inner: self.inner.clone(),
-        }
-    }
+    pub fn len(&self) -> usize { self.inner.lock().unwrap().len() }
+    pub fn is_empty(&self) -> bool { self.inner.lock().unwrap().is_empty() }
+    pub fn clear(&self) { self.inner.lock().unwrap().clear(); }
+    pub fn clone_arc(&self) -> Self { SharedHistory { inner: self.inner.clone() } }
 }
 
 impl Default for SharedHistory {
@@ -186,82 +128,48 @@ impl Clone for SharedHistory {
     }
 }
 
-/// Result of a consistency check.
 #[derive(Debug, Clone)]
 pub struct CheckResult {
-    /// Whether all checks passed.
     pub passed: bool,
-    /// List of violations found.
     pub violations: Vec<Violation>,
-    /// Statistics about the check.
     pub stats: CheckStats,
 }
 
-/// A consistency violation.
 #[derive(Debug, Clone)]
 pub struct Violation {
-    /// Type of violation.
     pub kind: ViolationKind,
-    /// Description of the violation.
     pub description: String,
-    /// Related history entries (by index).
     pub related_entries: Vec<usize>,
 }
 
-/// Types of consistency violations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ViolationKind {
-    /// Value was not conserved (money appeared or disappeared).
     ValueNotConserved,
-    /// Balance decreased without a withdrawal (time travel).
     TimeTravel,
-    /// Duplicate operation was executed twice.
     DuplicateExecution,
-    /// Operation ordering violation.
     OrderingViolation,
 }
 
-/// Statistics from the consistency check.
 #[derive(Debug, Clone, Default)]
 pub struct CheckStats {
-    /// Total operations checked.
     pub total_operations: usize,
-    /// Successful operations.
     pub successful_operations: usize,
-    /// Failed operations.
     pub failed_operations: usize,
-    /// Redirected operations.
     pub redirected_operations: usize,
-    /// Total deposits.
     pub total_deposits: u64,
-    /// Total withdrawals.
     pub total_withdrawals: u64,
-    /// Final total balance.
     pub final_total_balance: u64,
-    /// Expected total balance.
     pub expected_total_balance: u64,
 }
 
-/// The consistency checker (Oracle).
 pub struct Checker {
-    /// Initial balances for each user.
     initial_balances: HashMap<String, u64>,
 }
 
 impl Checker {
-    /// Create a new checker with initial balances.
-    pub fn new(initial_balances: HashMap<String, u64>) -> Self {
-        Checker { initial_balances }
-    }
+    pub fn new(initial_balances: HashMap<String, u64>) -> Self { Checker { initial_balances } }
+    pub fn empty() -> Self { Checker { initial_balances: HashMap::new() } }
 
-    /// Create a checker with no initial balances.
-    pub fn empty() -> Self {
-        Checker {
-            initial_balances: HashMap::new(),
-        }
-    }
-
-    /// Verify linearizability and consistency invariants.
     pub fn verify(&self, history: &History, final_balances: &HashMap<String, u64>) -> CheckResult {
         let mut violations = Vec::new();
         let mut stats = CheckStats::default();
@@ -401,7 +309,6 @@ impl Checker {
         }
     }
 
-    /// Quick check that just verifies value conservation.
     pub fn verify_conservation(
         &self,
         total_deposits: u64,

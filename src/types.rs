@@ -1,10 +1,6 @@
-//! Core type definitions: LogIndex, ViewId, CommitState, DurableEpoch.
-//! Zero-cost wrappers preventing "None is not 0" class bugs.
-
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Log position (0-indexed). Use CommitState for optional semantics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct LogIndex(pub u64);
@@ -36,7 +32,6 @@ impl From<LogIndex> for u64 {
     fn from(idx: LogIndex) -> Self { idx.0 }
 }
 
-/// View/term number. Monotonic across elections; reject stale views via manifest fence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct ViewId(pub u64);
@@ -66,10 +61,10 @@ impl From<ViewId> for u64 {
     fn from(view: ViewId) -> Self { view.0 }
 }
 
-/// Commit state distinguishing Empty (no commits) from At(index).
-/// Fixes the "None is not 0" bug where unwrap_or(0) caused phantom commits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Empty != At(0). Fixes "None is not 0" bugs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommitState {
+    #[default]
     Empty,
     At(LogIndex),
 }
@@ -96,7 +91,6 @@ impl CommitState {
         }
     }
 
-    /// Monotonic advance. Returns Err on regression.
     pub fn try_advance(self, new_index: LogIndex) -> Result<Self, CommitAdvanceError> {
         match self {
             CommitState::Empty => Ok(CommitState::At(new_index)),
@@ -112,7 +106,6 @@ impl CommitState {
         }
     }
 
-    /// Merge with remote (take max). Returns (merged, advanced).
     #[inline]
     pub fn merge(self, remote: Self) -> (Self, bool) {
         match (self, remote) {
@@ -126,7 +119,6 @@ impl CommitState {
         }
     }
 
-    /// Wire format: Empty -> None, At(idx) -> Some(idx)
     #[inline]
     pub const fn to_wire(&self) -> Option<u64> {
         match self {
@@ -143,9 +135,6 @@ impl CommitState {
     }
 }
 
-impl Default for CommitState {
-    fn default() -> Self { CommitState::Empty }
-}
 
 impl fmt::Display for CommitState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -173,8 +162,6 @@ impl fmt::Display for CommitAdvanceError {
 
 impl std::error::Error for CommitAdvanceError {}
 
-/// Durable epoch for side effect fencing. Derived from Manifest.highest_view.
-/// Sinks reject effects with epoch < last-seen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct DurableEpoch(pub u64);

@@ -7,25 +7,17 @@ use crate::engine::format::{
     MAX_PAYLOAD_SIZE,
 };
 
-/// Fault injection modes for testing.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum FaultMode {
-    /// Write only the header, leave payload as zeros/garbage.
     HeaderOnly,
-    /// Write header + partial payload (specified number of bytes).
     PartialPayload(usize),
-    /// Write complete entry but corrupt the header CRC after writing.
     CorruptHeaderCrc,
-    /// Write complete entry but corrupt the payload after writing.
     CorruptPayload,
-    /// Write complete entry but corrupt the prev_hash field.
     CorruptPrevHash,
-    /// Write zeros in the middle of the log (zero-hole).
     ZeroHole(usize),
 }
 
-/// A fault-injecting log writer for testing recovery robustness.
 #[allow(dead_code)]
 pub struct FaultingLogWriter {
     file: File,
@@ -37,7 +29,6 @@ pub struct FaultingLogWriter {
 
 #[allow(dead_code)]
 impl FaultingLogWriter {
-    /// Open a log file for fault injection testing.
     pub fn open(
         path: &Path,
         next_index: u64,
@@ -60,12 +51,10 @@ impl FaultingLogWriter {
         })
     }
 
-    /// Create a new empty log file for fault injection testing.
     pub fn create(path: &Path, view_id: u64) -> io::Result<Self> {
         Self::open(path, 0, 0, GENESIS_HASH, view_id)
     }
 
-    /// Append a valid entry (no fault injection).
     pub fn append_valid(&mut self, payload: &[u8]) -> io::Result<u64> {
         if payload.len() > MAX_PAYLOAD_SIZE as usize {
             panic!("Payload too large");
@@ -101,7 +90,6 @@ impl FaultingLogWriter {
         Ok(index)
     }
 
-    /// Append an entry with fault injection.
     pub fn append_faulted(&mut self, payload: &[u8], fault: FaultMode) -> io::Result<u64> {
         if payload.len() > MAX_PAYLOAD_SIZE as usize {
             panic!("Payload too large");
@@ -124,101 +112,79 @@ impl FaultingLogWriter {
 
         match fault {
             FaultMode::HeaderOnly => {
-                // Write only the header, no payload
                 self.file.seek(SeekFrom::Start(self.write_offset))?;
                 self.file.write_all(header_bytes)?;
                 self.file.sync_all()?;
-                // Don't update state - simulates crash after partial write
             }
 
             FaultMode::PartialPayload(bytes) => {
-                // Write header + partial payload
                 self.file.seek(SeekFrom::Start(self.write_offset))?;
                 self.file.write_all(header_bytes)?;
                 let to_write = std::cmp::min(bytes, payload.len());
                 self.file.write_all(&payload[..to_write])?;
                 self.file.sync_all()?;
-                // Don't update state - simulates crash after partial write
             }
 
             FaultMode::CorruptHeaderCrc => {
-                // Write complete entry, then corrupt the CRC
                 self.file.seek(SeekFrom::Start(self.write_offset))?;
                 self.file.write_all(header_bytes)?;
                 self.file.write_all(payload)?;
                 let padding_len = calculate_padding(payload.len() as u32);
                 self.file.write_all(&vec![0u8; padding_len])?;
                 self.file.sync_all()?;
-
-                // Corrupt the CRC (first 4 bytes of header)
                 self.file.seek(SeekFrom::Start(self.write_offset))?;
                 self.file.write_all(&[0xFF, 0xFF, 0xFF, 0xFF])?;
                 self.file.sync_all()?;
-                // Don't update state - this is corruption
             }
 
             FaultMode::CorruptPayload => {
-                // Write complete entry, then corrupt the payload
                 self.file.seek(SeekFrom::Start(self.write_offset))?;
                 self.file.write_all(header_bytes)?;
                 self.file.write_all(payload)?;
                 let padding_len = calculate_padding(payload.len() as u32);
                 self.file.write_all(&vec![0u8; padding_len])?;
                 self.file.sync_all()?;
-
-                // Corrupt the payload (write garbage at payload offset)
                 let payload_offset = self.write_offset + HEADER_SIZE as u64;
                 self.file.seek(SeekFrom::Start(payload_offset))?;
                 self.file.write_all(&[0xDE, 0xAD, 0xBE, 0xEF])?;
                 self.file.sync_all()?;
-                // Don't update state - this is corruption
             }
 
             FaultMode::CorruptPrevHash => {
-                // Write complete entry, then corrupt the prev_hash field
                 self.file.seek(SeekFrom::Start(self.write_offset))?;
                 self.file.write_all(header_bytes)?;
                 self.file.write_all(payload)?;
                 let padding_len = calculate_padding(payload.len() as u32);
                 self.file.write_all(&vec![0u8; padding_len])?;
                 self.file.sync_all()?;
-
-                // Corrupt prev_hash (bytes 32-48 of header)
                 let prev_hash_offset = self.write_offset + 32;
                 self.file.seek(SeekFrom::Start(prev_hash_offset))?;
                 self.file.write_all(&[0xBA, 0xAD, 0xF0, 0x0D])?;
                 self.file.sync_all()?;
-                // Don't update state - this is corruption
             }
 
             FaultMode::ZeroHole(size) => {
-                // Write zeros at current offset (simulates sparse file / partial zeroing)
                 self.file.seek(SeekFrom::Start(self.write_offset))?;
                 self.file.write_all(&vec![0u8; size])?;
                 self.file.sync_all()?;
-                // Don't update state
             }
         }
 
         Ok(index)
     }
 
-    /// Get current write offset.
     pub fn write_offset(&self) -> u64 {
         self.write_offset
     }
 
-    /// Get next index.
     pub fn next_index(&self) -> u64 {
         self.next_index
     }
 
-    /// Get tail hash.
     pub fn tail_hash(&self) -> [u8; 16] {
         self.tail_hash
     }
 
-    /// Manually advance state (for testing specific scenarios).
     pub fn advance_state(&mut self, payload: &[u8]) {
         let header = LogHeader::new(
             self.next_index,
@@ -235,9 +201,6 @@ impl FaultingLogWriter {
         self.write_offset += frame_size(payload.len() as u32) as u64;
     }
 
-    /// Simulate write reordering: write entry N+1 before entry N.
-    /// This simulates what happens when the drive reorders writes.
-    /// Returns (offset_n, offset_n1) for verification.
     pub fn append_reordered_pair(
         &mut self,
         payload_n: &[u8],
@@ -258,7 +221,6 @@ impl FaultingLogWriter {
         let offset_n = self.write_offset;
         let frame_size_n = frame_size(payload_n.len() as u32);
 
-        // Calculate what entry N+1 would look like (using N's chain hash)
         let chain_hash_n = compute_chain_hash(&header_n, payload_n);
         let index_n1 = index_n + 1;
         let header_n1 = LogHeader::new(
@@ -274,26 +236,18 @@ impl FaultingLogWriter {
         let offset_n1 = offset_n + frame_size_n as u64;
         let frame_size_n1 = frame_size(payload_n1.len() as u32);
 
-        // REORDER: Write N+1 first, then N
-        // This simulates drive reordering where N+1 persists before N
-
-        // Write entry N+1 at its correct offset
         self.file.seek(SeekFrom::Start(offset_n1))?;
         self.file.write_all(header_n1.as_bytes())?;
         self.file.write_all(payload_n1)?;
         let padding_n1 = vec![0u8; calculate_padding(payload_n1.len() as u32)];
         self.file.write_all(&padding_n1)?;
         self.file.sync_all()?;
-
-        // Now write entry N at its correct offset
         self.file.seek(SeekFrom::Start(offset_n))?;
         self.file.write_all(header_n.as_bytes())?;
         self.file.write_all(payload_n)?;
         let padding_n = vec![0u8; calculate_padding(payload_n.len() as u32)];
         self.file.write_all(&padding_n)?;
         self.file.sync_all()?;
-
-        // Update state as if both were written normally
         self.tail_hash = compute_chain_hash(&header_n1, payload_n1);
         self.next_index += 2;
         self.write_offset += (frame_size_n + frame_size_n1) as u64;
@@ -301,8 +255,6 @@ impl FaultingLogWriter {
         Ok((offset_n, offset_n1))
     }
 
-    /// Simulate partial reordering: write N+1 but leave N as zeros.
-    /// This is the dangerous case where power loss occurs after N+1 persists but before N.
     pub fn append_orphaned_entry(
         &mut self,
         payload_n: &[u8],
@@ -323,7 +275,6 @@ impl FaultingLogWriter {
         let offset_n = self.write_offset;
         let frame_size_n = frame_size(payload_n.len() as u32);
 
-        // Calculate what entry N+1 would look like
         let chain_hash_n = compute_chain_hash(&header_n, payload_n);
         let index_n1 = index_n + 1;
         let header_n1 = LogHeader::new(
@@ -338,7 +289,6 @@ impl FaultingLogWriter {
         );
         let offset_n1 = offset_n + frame_size_n as u64;
 
-        // Write zeros at entry N's location (simulates N not persisting)
         self.file.seek(SeekFrom::Start(offset_n))?;
         self.file.write_all(&vec![0u8; frame_size_n])?;
 
@@ -349,14 +299,10 @@ impl FaultingLogWriter {
         let padding_n1 = vec![0u8; calculate_padding(payload_n1.len() as u32)];
         self.file.write_all(&padding_n1)?;
         self.file.sync_all()?;
-
-        // Don't update state - this simulates crash before memory update
-
         Ok(offset_n1)
     }
 }
 
-/// Inject corruption at a specific offset in an existing log file.
 #[allow(dead_code)]
 pub fn inject_corruption(path: &Path, offset: u64, corruption: &[u8]) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).open(path)?;
@@ -366,13 +312,11 @@ pub fn inject_corruption(path: &Path, offset: u64, corruption: &[u8]) -> io::Res
     Ok(())
 }
 
-/// Inject zeros at a specific offset (zero-hole).
 #[allow(dead_code)]
 pub fn inject_zero_hole(path: &Path, offset: u64, size: usize) -> io::Result<()> {
     inject_corruption(path, offset, &vec![0u8; size])
 }
 
-/// Truncate file to specific size without proper recovery.
 #[allow(dead_code)]
 pub fn force_truncate(path: &Path, size: u64) -> io::Result<()> {
     let file = OpenOptions::new().write(true).open(path)?;
@@ -381,7 +325,6 @@ pub fn force_truncate(path: &Path, size: u64) -> io::Result<()> {
     Ok(())
 }
 
-/// Read raw bytes from log file for inspection.
 #[allow(dead_code)]
 pub fn read_raw(path: &Path, offset: u64, size: usize) -> io::Result<Vec<u8>> {
     let mut file = OpenOptions::new().read(true).open(path)?;

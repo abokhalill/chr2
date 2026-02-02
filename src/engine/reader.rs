@@ -17,36 +17,20 @@ pub struct LogEntry {
     pub view_id: u64,
     pub stream_id: u64,
     pub payload: Vec<u8>,
-    /// Consensus timestamp (nanos). Assigned by Primary, agreed by quorum.
     pub timestamp_ns: u64,
     pub flags: u16,
     pub schema_version: u16,
-    /// For deterministic random seed derivation.
     pub prev_hash: [u8; 16],
 }
 
 #[derive(Debug)]
 pub enum ReadError {
-    /// ENFORCES F3: Reader cannot observe uncommitted entries.
-    IndexNotCommitted {
-        requested: u64,
-        committed: Option<u64>,
-    },
-    IndexNotFound {
-        requested: u64,
-    },
-    IndexTruncated {
-        requested: u64,
-        base_index: u64,
-    },
+    IndexNotCommitted { requested: u64, committed: Option<u64> },
+    IndexNotFound { requested: u64 },
+    IndexTruncated { requested: u64, base_index: u64 },
     Io(io::Error),
-    ValidationFailed {
-        index: u64,
-        reason: &'static str,
-    },
-    TruncatedDuringRead {
-        index: u64,
-    },
+    ValidationFailed { index: u64, reason: &'static str },
+    TruncatedDuringRead { index: u64 },
 }
 
 impl From<io::Error> for ReadError {
@@ -98,8 +82,7 @@ impl std::fmt::Display for ReadError {
 
 impl std::error::Error for ReadError {}
 
-/// Visibility bridge: Writers Release-store, Readers Acquire-load.
-/// u64::MAX = Empty, otherwise At(n). Exposes type-safe CommitState API.
+/// Writers Release-store, Readers Acquire-load. u64::MAX = Empty.
 pub struct CommittedState {
     committed_index: AtomicU64,
 }
@@ -130,7 +113,6 @@ impl CommittedState {
         if idx == NO_COMMITS_SENTINEL { None } else { Some(idx) }
     }
 
-    /// CAS loop enforcing monotonic advance.
     pub fn try_advance(&self, new_state: CommitState) -> Result<(), crate::types::CommitAdvanceError> {
         let new_value = match new_state {
             CommitState::Empty => {
@@ -172,17 +154,13 @@ impl Default for CommittedState {
     fn default() -> Self { Self::new() }
 }
 
-/// Read-only log reader. Multiple instances allowed. Never observes uncommitted entries.
+/// Read-only. Multiple instances allowed. ENFORCES F3 via committed_state.
 pub struct LogReader {
     file: File,
     path: std::path::PathBuf,
-    /// ENFORCES F3: All read bounds checked against this.
     committed_state: Arc<CommittedState>,
-    /// Lazy index-to-offset cache for O(1) lookups.
     index_offsets: Vec<u64>,
-    /// First index in file. 0 for fresh logs, snapshot+1 for truncated.
     base_index: u64,
-    /// Chain hash of entry (base_index - 1). For chain continuity after truncation.
     base_prev_hash: [u8; 16],
 }
 
@@ -233,7 +211,6 @@ impl LogReader {
         self.committed_state.committed_index()
     }
 
-    /// Returns IndexNotCommitted if beyond committed, IndexTruncated if compacted.
     pub fn read(&mut self, index: u64) -> Result<LogEntry, ReadError> {
         if index < self.base_index {
             return Err(ReadError::IndexTruncated {
@@ -263,9 +240,7 @@ impl LogReader {
         self.read_entry_at_offset(offset, index)
     }
 
-    /// Read [start, end] inclusive. Clamps to committed_index snapshot.
     pub fn read_range(&mut self, start: u64, end: u64) -> Result<Vec<LogEntry>, ReadError> {
-        // Snapshot committed_index ONCE for consistent view.
         let committed = self.committed_state.committed_index.load(Ordering::Acquire);
 
         if committed == u64::MAX {
@@ -297,7 +272,6 @@ impl LogReader {
         Ok(entries)
     }
 
-    /// Returns entries [0, committed_index] at snapshot time.
     pub fn scan_all(&mut self) -> Result<Vec<LogEntry>, ReadError> {
         let committed = self.committed_state.committed_index.load(Ordering::Acquire);
 
@@ -308,7 +282,6 @@ impl LogReader {
         self.read_range(0, committed)
     }
 
-    /// Builds index-to-offset cache lazily. For truncated logs, cache[0] = base_index.
     fn get_offset_for_index(&mut self, index: u64) -> Result<u64, ReadError> {
         if index < self.base_index {
             return Err(ReadError::IndexTruncated {
@@ -455,8 +428,6 @@ impl LogReader {
         self.committed_index().is_none()
     }
 
-    /// Chain hash bridges the hash chain across snapshot compaction.
-    /// Computed as: BLAKE3(Header[4..64] || Payload)[0..16]
     pub fn get_chain_hash(&mut self, index: u64) -> Result<[u8; 16], ReadError> {
         let committed = self.committed_state.committed_index.load(Ordering::Acquire);
 
@@ -489,7 +460,6 @@ impl LogReader {
         Ok(compute_chain_hash(&header, &payload))
     }
 
-    /// The "Cut Point" for log truncation. Executor uses this for compaction.
     pub fn get_authoritative_offset(&mut self, index: u64) -> Option<u64> {
         if index < self.base_index {
             return None;

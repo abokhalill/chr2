@@ -1,98 +1,72 @@
-//! Lightweight metrics for observability.
-//!
-//! Provides atomic counters and histograms for tracking system behavior.
-//! Designed to be lock-free and suitable for high-throughput paths.
-
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-/// Atomic counter for tracking events.
 #[derive(Debug, Default)]
 pub struct Counter {
     value: AtomicU64,
 }
 
 impl Counter {
-    /// Create a new counter initialized to zero.
     pub const fn new() -> Self {
-        Counter {
-            value: AtomicU64::new(0),
-        }
+        Counter { value: AtomicU64::new(0) }
     }
 
-    /// Increment the counter by 1.
     #[inline]
     pub fn inc(&self) {
         self.value.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Increment the counter by a specific amount.
     #[inline]
     pub fn add(&self, n: u64) {
         self.value.fetch_add(n, Ordering::Relaxed);
     }
 
-    /// Get the current value.
     #[inline]
     pub fn get(&self) -> u64 {
         self.value.load(Ordering::Relaxed)
     }
 
-    /// Reset the counter to zero and return the previous value.
     #[inline]
     pub fn reset(&self) -> u64 {
         self.value.swap(0, Ordering::Relaxed)
     }
 }
 
-/// Atomic gauge for tracking current values (can go up or down).
 #[derive(Debug, Default)]
 pub struct Gauge {
     value: AtomicU64,
 }
 
 impl Gauge {
-    /// Create a new gauge initialized to zero.
     pub const fn new() -> Self {
-        Gauge {
-            value: AtomicU64::new(0),
-        }
+        Gauge { value: AtomicU64::new(0) }
     }
 
-    /// Set the gauge to a specific value.
     #[inline]
     pub fn set(&self, n: u64) {
         self.value.store(n, Ordering::Relaxed);
     }
 
-    /// Increment the gauge by 1.
     #[inline]
     pub fn inc(&self) {
         self.value.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Decrement the gauge by 1.
     #[inline]
     pub fn dec(&self) {
         self.value.fetch_sub(1, Ordering::Relaxed);
     }
 
-    /// Get the current value.
     #[inline]
     pub fn get(&self) -> u64 {
         self.value.load(Ordering::Relaxed)
     }
 }
 
-/// Simple histogram using fixed buckets for latency tracking.
-/// Buckets are in microseconds: [10, 50, 100, 500, 1000, 5000, 10000, 50000, 100000, +Inf]
 #[derive(Debug)]
 pub struct Histogram {
-    /// Bucket counts (10 buckets + overflow)
     buckets: [AtomicU64; 11],
-    /// Sum of all observed values (for computing mean)
     sum: AtomicU64,
-    /// Count of all observations
     count: AtomicU64,
 }
 
@@ -103,10 +77,8 @@ impl Default for Histogram {
 }
 
 impl Histogram {
-    /// Bucket boundaries in microseconds.
     const BUCKET_BOUNDS: [u64; 10] = [10, 50, 100, 500, 1000, 5000, 10000, 50000, 100000, u64::MAX];
 
-    /// Create a new histogram.
     pub const fn new() -> Self {
         Histogram {
             buckets: [
@@ -127,10 +99,8 @@ impl Histogram {
         }
     }
 
-    /// Record a value in microseconds.
     #[inline]
     pub fn observe(&self, value_us: u64) {
-        // Find the appropriate bucket
         let bucket_idx = Self::BUCKET_BOUNDS
             .iter()
             .position(|&bound| value_us <= bound)
@@ -141,7 +111,6 @@ impl Histogram {
         self.count.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Record a duration (converts to microseconds).
     #[inline]
     pub fn observe_duration(&self, start: Instant) {
         let elapsed = start.elapsed();
@@ -149,19 +118,16 @@ impl Histogram {
         self.observe(us);
     }
 
-    /// Get the total count of observations.
     #[inline]
     pub fn count(&self) -> u64 {
         self.count.load(Ordering::Relaxed)
     }
 
-    /// Get the sum of all observations.
     #[inline]
     pub fn sum(&self) -> u64 {
         self.sum.load(Ordering::Relaxed)
     }
 
-    /// Get the mean value (returns 0 if no observations).
     #[inline]
     pub fn mean(&self) -> f64 {
         let count = self.count();
@@ -172,7 +138,6 @@ impl Histogram {
         }
     }
 
-    /// Get bucket counts as an array.
     pub fn bucket_counts(&self) -> [u64; 11] {
         [
             self.buckets[0].load(Ordering::Relaxed),
@@ -189,8 +154,6 @@ impl Histogram {
         ]
     }
 
-    /// Get an approximate percentile (p50, p90, p99, etc.).
-    /// Returns the upper bound of the bucket containing that percentile.
     pub fn percentile(&self, p: f64) -> u64 {
         let total = self.count();
         if total == 0 {
@@ -215,23 +178,14 @@ impl Histogram {
     }
 }
 
-/// Engine-level metrics.
 pub struct EngineMetrics {
-    /// Total entries written
     pub entries_written: Counter,
-    /// Total bytes written
     pub bytes_written: Counter,
-    /// Write latency histogram (microseconds)
     pub write_latency_us: Histogram,
-    /// Total fdatasync calls
     pub fdatasync_count: Counter,
-    /// Total entries read
     pub entries_read: Counter,
-    /// Read latency histogram (microseconds)
     pub read_latency_us: Histogram,
-    /// Recovery operations
     pub recoveries: Counter,
-    /// Truncated entries during recovery
     pub truncated_entries: Counter,
 }
 
@@ -256,29 +210,17 @@ impl EngineMetrics {
     }
 }
 
-/// VSR-level metrics.
 pub struct VsrMetrics {
-    /// Client requests received
     pub requests_received: Counter,
-    /// Client requests rejected (overload)
     pub requests_rejected: Counter,
-    /// Entries committed
     pub entries_committed: Counter,
-    /// View changes initiated
     pub view_changes: Counter,
-    /// Fenced messages rejected
     pub fenced_messages: Counter,
-    /// Current view (gauge)
     pub current_view: Gauge,
-    /// Current role (0=Backup, 1=Primary, 2=ViewChange)
     pub current_role: Gauge,
-    /// In-flight requests (gauge)
     pub inflight_requests: Gauge,
-    /// Replication lag (gauge)
     pub replication_lag: Gauge,
-    /// Prepare latency histogram
     pub prepare_latency_us: Histogram,
-    /// Commit latency histogram
     pub commit_latency_us: Histogram,
 }
 
@@ -306,19 +248,12 @@ impl VsrMetrics {
     }
 }
 
-/// Executor-level metrics.
 pub struct ExecutorMetrics {
-    /// Entries applied
     pub entries_applied: Counter,
-    /// Apply latency histogram
     pub apply_latency_us: Histogram,
-    /// Snapshots taken
     pub snapshots_taken: Counter,
-    /// Snapshot latency histogram
     pub snapshot_latency_us: Histogram,
-    /// Side effects emitted
     pub side_effects_emitted: Counter,
-    /// Side effects executed
     pub side_effects_executed: Counter,
 }
 

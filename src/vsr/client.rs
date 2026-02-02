@@ -5,46 +5,26 @@ use serde::{Deserialize, Serialize};
 
 use super::message::{ClientRequest, ClientResponse, ClientResult};
 
-/// Session state for a single client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientSession {
-    /// Last processed sequence number.
     pub last_sequence_number: u64,
-    /// Cached response for the last request.
     pub last_response: Option<ClientResponse>,
 }
 
-/// Session map for tracking client request idempotency.
-///
-/// This ensures exactly-once semantics by caching the last response
-/// for each client and returning it for duplicate requests.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionMap {
-    /// Map of client_id -> session state.
     sessions: HashMap<u64, ClientSession>,
 }
 
 impl SessionMap {
-    /// Create a new empty session map.
-    pub fn new() -> Self {
-        SessionMap {
-            sessions: HashMap::new(),
-        }
-    }
+    pub fn new() -> Self { SessionMap { sessions: HashMap::new() } }
 
-    /// Check if a request is a duplicate.
-    ///
-    /// Returns Some(cached_response) if this is a duplicate request,
-    /// None if this is a new request that should be processed.
     pub fn check_duplicate(&self, client_id: u64, sequence_number: u64) -> Option<ClientResponse> {
         if let Some(session) = self.sessions.get(&client_id) {
             if sequence_number <= session.last_sequence_number {
-                // This is a duplicate or old request
                 if sequence_number == session.last_sequence_number {
-                    // Return cached response for exact duplicate
                     return session.last_response.clone();
                 } else {
-                    // Old request - return error
                     return Some(ClientResponse {
                         sequence_number,
                         result: ClientResult::Error {
@@ -60,7 +40,6 @@ impl SessionMap {
         None
     }
 
-    /// Record a processed request and its response.
     pub fn record_response(&mut self, client_id: u64, response: ClientResponse) {
         let session = self.sessions.entry(client_id).or_insert(ClientSession {
             last_sequence_number: 0,
@@ -73,59 +52,31 @@ impl SessionMap {
         }
     }
 
-    /// Get the last sequence number for a client.
     pub fn last_sequence(&self, client_id: u64) -> u64 {
-        self.sessions
-            .get(&client_id)
-            .map(|s| s.last_sequence_number)
-            .unwrap_or(0)
+        self.sessions.get(&client_id).map(|s| s.last_sequence_number).unwrap_or(0)
     }
 
-    /// Clear all sessions (for testing).
-    pub fn clear(&mut self) {
-        self.sessions.clear();
-    }
-
-    /// Get the number of tracked clients.
-    pub fn client_count(&self) -> usize {
-        self.sessions.len()
-    }
+    pub fn clear(&mut self) { self.sessions.clear(); }
+    pub fn client_count(&self) -> usize { self.sessions.len() }
 }
 
-/// Pending request tracker for async request handling.
 #[derive(Debug)]
 pub struct PendingRequest {
-    /// The original request.
     pub request: ClientRequest,
-    /// Log index where this request was appended.
     pub log_index: u64,
-    /// When the request was submitted.
     pub submitted_at: Instant,
 }
 
-/// Client proxy for interacting with the VSR cluster.
-///
-/// Handles:
-/// - Leader discovery and caching
-/// - Automatic retry on NotThePrimary
-/// - Exponential backoff for timeouts
 pub struct ChrClient {
-    /// Unique client identifier.
     pub client_id: u64,
-    /// Next sequence number to use.
     next_sequence: u64,
-    /// Last known leader node ID.
     last_known_leader: Option<u32>,
-    /// List of all node IDs in the cluster.
     cluster_nodes: Vec<u32>,
-    /// Maximum number of retries.
     max_retries: u32,
-    /// Base timeout for requests.
     base_timeout: Duration,
 }
 
 impl ChrClient {
-    /// Create a new client.
     pub fn new(client_id: u64, cluster_nodes: Vec<u32>) -> Self {
         ChrClient {
             client_id,
@@ -137,7 +88,6 @@ impl ChrClient {
         }
     }
 
-    /// Create a request with the next sequence number.
     pub fn create_request(&mut self, payload: Vec<u8>) -> ClientRequest {
         let seq = self.next_sequence;
         self.next_sequence += 1;
@@ -149,46 +99,20 @@ impl ChrClient {
         }
     }
 
-    /// Create a request with a specific sequence number (for retries).
     pub fn create_request_with_seq(&self, payload: Vec<u8>, sequence_number: u64) -> ClientRequest {
-        ClientRequest {
-            client_id: self.client_id,
-            sequence_number,
-            payload,
-        }
+        ClientRequest { client_id: self.client_id, sequence_number, payload }
     }
 
-    /// Get the current sequence number (without incrementing).
-    pub fn current_sequence(&self) -> u64 {
-        self.next_sequence
-    }
+    pub fn current_sequence(&self) -> u64 { self.next_sequence }
+    pub fn update_leader(&mut self, leader_id: u32) { self.last_known_leader = Some(leader_id); }
+    pub fn last_known_leader(&self) -> Option<u32> { self.last_known_leader }
+    pub fn target_node(&self) -> u32 { self.last_known_leader.unwrap_or(self.cluster_nodes[0]) }
 
-    /// Update the last known leader.
-    pub fn update_leader(&mut self, leader_id: u32) {
-        self.last_known_leader = Some(leader_id);
-    }
-
-    /// Get the last known leader.
-    pub fn last_known_leader(&self) -> Option<u32> {
-        self.last_known_leader
-    }
-
-    /// Get the target node for the next request.
-    ///
-    /// Returns the last known leader, or the first node if unknown.
-    pub fn target_node(&self) -> u32 {
-        self.last_known_leader.unwrap_or(self.cluster_nodes[0])
-    }
-
-    /// Handle a NotThePrimary response.
-    ///
-    /// Updates the leader cache and returns the new target.
     pub fn handle_redirect(&mut self, leader_hint: Option<u32>) -> u32 {
         if let Some(leader) = leader_hint {
             self.last_known_leader = Some(leader);
             leader
         } else {
-            // No hint - try next node in round-robin
             let current = self.last_known_leader.unwrap_or(0);
             let next = ((current as usize + 1) % self.cluster_nodes.len()) as u32;
             self.last_known_leader = Some(next);
@@ -196,40 +120,21 @@ impl ChrClient {
         }
     }
 
-    /// Calculate backoff duration for a retry attempt.
     pub fn backoff_duration(&self, attempt: u32) -> Duration {
-        let multiplier = 2u64.pow(attempt.min(5));
-        self.base_timeout * multiplier as u32
+        self.base_timeout * 2u32.pow(attempt.min(5))
     }
 
-    /// Get the maximum number of retries.
-    pub fn max_retries(&self) -> u32 {
-        self.max_retries
-    }
+    pub fn max_retries(&self) -> u32 { self.max_retries }
 
-    /// Check if an error response indicates system overload.
-    /// Returns true if the error message contains "System Overloaded".
     pub fn is_overload_error(response: &ClientResponse) -> bool {
-        match &response.result {
-            ClientResult::Error { message } => message.contains("System Overloaded"),
-            _ => false,
-        }
+        matches!(&response.result, ClientResult::Error { message } if message.contains("System Overloaded"))
     }
 
-    /// Calculate backoff duration for overload errors.
-    /// Uses more aggressive backoff than regular retries to allow system recovery.
     pub fn overload_backoff_duration(&self, attempt: u32) -> Duration {
-        // Start with 100ms base, double each time, cap at 3.2 seconds
-        let base_ms = 100u64;
-        let multiplier = 2u64.pow(attempt.min(5));
-        Duration::from_millis(base_ms * multiplier)
+        Duration::from_millis(100 * 2u64.pow(attempt.min(5)))
     }
 
-    /// Handle an overload error response.
-    /// Returns the recommended wait duration before retrying.
-    pub fn handle_overload(&self, attempt: u32) -> Duration {
-        self.overload_backoff_duration(attempt)
-    }
+    pub fn handle_overload(&self, attempt: u32) -> Duration { self.overload_backoff_duration(attempt) }
 }
 
 #[cfg(test)]

@@ -3,11 +3,10 @@ use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
-pub const SNAPSHOT_MAGIC: [u8; 4] = [0x53, 0x4E, 0x41, 0x50]; // "SNAP"
+pub const SNAPSHOT_MAGIC: [u8; 4] = [0x53, 0x4E, 0x41, 0x50];
 pub const SNAPSHOT_VERSION: u16 = 1;
 pub const SNAPSHOT_HEADER_SIZE: usize = 64;
 
-/// 64-byte header + variable state. chain_hash bridges hash chain across compaction.
 #[derive(Clone, Debug)]
 pub struct SnapshotManifest {
     pub last_included_index: u64,
@@ -105,7 +104,6 @@ impl SnapshotManifest {
         header
     }
 
-    /// Atomic: write temp → fsync → rename. No partial snapshots on disk.
     pub fn save_to_file(&self, path: &Path) -> Result<(), SnapshotError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -123,7 +121,6 @@ impl SnapshotManifest {
 
         fs::rename(&temp_path, path)?;
 
-        // fsync directory to ensure rename survives power loss.
         if let Some(parent) = path.parent() {
             if let Ok(dir) = File::open(parent) {
                 let result = unsafe { libc::fsync(dir.as_raw_fd()) };

@@ -1,6 +1,3 @@
-//! Durable fencing for side effect execution.
-//! Ensures side effects execute only under legitimate Primary authority.
-
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 

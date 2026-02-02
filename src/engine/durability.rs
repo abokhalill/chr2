@@ -9,19 +9,13 @@ use std::time::Duration;
 use crate::engine::disk::{LogEntry, SyncDisk, VirtualDisk};
 use crate::engine::log::LogWriter;
 
-/// Unique identifier for a durability request batch.
 pub type BatchId = u64;
 
-/// Errors that can occur in the durability layer.
 #[derive(Debug, Clone)]
 pub enum DurabilityError {
-    /// Worker is not running (shutdown or never started).
     WorkerNotRunning,
-    /// Channel to worker is disconnected.
     ChannelDisconnected,
-    /// Worker thread panicked.
     WorkerPanicked,
-    /// Empty batch submitted.
     EmptyBatch,
 }
 
@@ -40,98 +34,47 @@ impl fmt::Display for DurabilityError {
 
 impl std::error::Error for DurabilityError {}
 
-/// Request sent to the DurabilityWorker.
 #[derive(Debug)]
 pub enum DurabilityRequest {
-    /// Append a batch of entries to the log.
     AppendBatch {
-        /// Unique batch identifier for correlation.
         batch_id: BatchId,
-        /// Payloads to append.
         payloads: Vec<Vec<u8>>,
-        /// Consensus timestamp (nanoseconds since epoch).
         timestamp_ns: u64,
-        /// Reserved start index (from handle's atomic reservation).
-        /// INVARIANT: Writer's next_index must equal this when processing.
-        reserved_start_index: u64,
+        reserved_start_index: u64, // INVARIANT: must match writer's next_index
     },
-    /// Append a single entry to the log.
     Append {
-        /// Unique batch identifier for correlation.
         batch_id: BatchId,
-        /// Payload to append.
         payload: Vec<u8>,
-        /// Stream ID for the entry.
         stream_id: u64,
-        /// Flags for the entry.
         flags: u16,
-        /// Consensus timestamp (nanoseconds since epoch).
         timestamp_ns: u64,
-        /// Reserved index (from handle's atomic reservation).
-        /// INVARIANT: Writer's next_index must equal this when processing.
-        reserved_index: u64,
+        reserved_index: u64, // INVARIANT: must match writer's next_index
     },
-    /// Shutdown the worker gracefully.
     Shutdown,
 }
 
-/// Result of a durability operation.
 #[derive(Debug, Clone)]
 pub enum DurabilityResult {
-    /// Batch append succeeded.
-    BatchSuccess {
-        /// First index in the batch.
-        start_index: u64,
-        /// Last index in the batch.
-        last_index: u64,
-    },
-    /// Single append succeeded.
-    AppendSuccess {
-        /// Index of the appended entry.
-        index: u64,
-    },
-    /// Operation failed.
-    Error {
-        /// Error message.
-        message: String,
-    },
+    BatchSuccess { start_index: u64, last_index: u64 },
+    AppendSuccess { index: u64 },
+    Error { message: String },
 }
 
-/// Completion notification from the DurabilityWorker.
 #[derive(Debug, Clone)]
 pub struct DurabilityCompletion {
-    /// Batch ID that completed.
     pub batch_id: BatchId,
-    /// Result of the operation.
     pub result: DurabilityResult,
 }
 
-/// Handle for submitting work to the DurabilityWorker.
-///
-/// This is the interface used by VsrNode to enqueue durability work
-/// without blocking the control plane.
 #[derive(Clone)]
 pub struct DurabilityHandle {
-    /// Channel for sending requests to the worker.
     request_tx: Sender<DurabilityRequest>,
-    /// Next batch ID to assign.
     next_batch_id: Arc<AtomicU64>,
-    /// Whether the worker is running.
     running: Arc<AtomicBool>,
-    /// Current next_index (speculative, updated on completion).
-    /// This allows VsrNode to know what indices will be assigned.
-    next_index: Arc<AtomicU64>,
+    next_index: Arc<AtomicU64>, // Speculative; allows index reservation before I/O completes
 }
 
 impl DurabilityHandle {
-    /// Submit a batch of entries for durable append.
-    ///
-    /// Returns immediately with the batch_id and predicted (start_index, last_index).
-    /// The actual completion will be delivered on the completion channel.
-    ///
-    /// # Returns
-    /// - `Ok((batch_id, start_index, last_index))` - Request enqueued successfully
-    /// - `Err(DurabilityError)` - Worker is not running or channel is disconnected
     pub fn submit_batch(
         &self,
         payloads: Vec<Vec<u8>>,
@@ -162,9 +105,6 @@ impl DurabilityHandle {
         Ok((batch_id, start_index, last_index))
     }
 
-    /// Submit a single entry for durable append.
-    ///
-    /// Returns immediately with the batch_id and predicted index.
     pub fn submit_single(
         &self,
         payload: Vec<u8>,
@@ -197,7 +137,6 @@ impl DurabilityHandle {
         Ok((batch_id, index))
     }
 
-    /// Request graceful shutdown of the worker.
     pub fn shutdown(&self) -> Result<(), DurabilityError> {
         self.running.store(false, Ordering::SeqCst);
         self.request_tx
@@ -205,57 +144,29 @@ impl DurabilityHandle {
             .map_err(|_| DurabilityError::ChannelDisconnected)
     }
 
-    /// Check if the worker is running.
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// Get the current speculative next_index.
-    ///
-    /// This is the index that will be assigned to the next entry.
-    /// Note: This may be ahead of what's actually durable.
     pub fn next_index(&self) -> u64 {
         self.next_index.load(Ordering::SeqCst)
     }
 }
 
-/// The DurabilityWorker background thread.
-///
-/// Owns the LogWriter and processes durability requests in a dedicated thread.
 pub struct DurabilityWorker {
-    /// Handle for submitting work.
     handle: DurabilityHandle,
-    /// Channel for receiving completions.
     completion_rx: Receiver<DurabilityCompletion>,
-    /// When true, the worker will pause before processing requests.
     stall_flag: Arc<AtomicBool>,
-    /// Join handle for the worker thread.
     thread_handle: Option<JoinHandle<()>>,
 }
 
 impl DurabilityWorker {
-    /// Create a new DurabilityWorker with a fresh log file.
-    ///
-    /// # Arguments
-    /// * `log_path` - Path to the log file
-    /// * `view_id` - Initial view ID
-    ///
-    /// # Returns
-    /// The worker instance with handle and completion receiver.
     pub fn create(log_path: &Path, view_id: u64) -> std::io::Result<Self> {
         let writer = LogWriter::create(log_path, view_id)?;
         let next_index = writer.next_index();
         Self::spawn_with_writer(writer, next_index)
     }
 
-    /// Create a new DurabilityWorker with an existing log file (recovery).
-    ///
-    /// # Arguments
-    /// * `log_path` - Path to the log file
-    /// * `next_index` - Next index to write (from recovery)
-    /// * `write_offset` - Offset to start writing (from recovery)
-    /// * `tail_hash` - Hash accumulator state (from recovery)
-    /// * `view_id` - Current view ID
     pub fn open(
         log_path: &Path,
         next_index: u64,
@@ -267,15 +178,11 @@ impl DurabilityWorker {
         Self::spawn_with_writer(writer, next_index)
     }
 
-    /// Spawn the worker thread with an existing LogWriter.
     fn spawn_with_writer(writer: LogWriter, initial_next_index: u64) -> std::io::Result<Self> {
         let disk = Box::new(SyncDisk::new(writer));
         Self::spawn_with_disk(disk, initial_next_index)
     }
 
-    /// Spawn the worker thread with a VirtualDisk implementation.
-    ///
-    /// This is the unified entry point that works with any disk backend.
     pub fn spawn_with_disk(
         disk: Box<dyn VirtualDisk>,
         initial_next_index: u64,
@@ -298,7 +205,6 @@ impl DurabilityWorker {
             next_index,
         };
 
-        // Spawn the worker thread
         let thread_handle = thread::Builder::new()
             .name("durability-worker".to_string())
             .spawn(move || {
@@ -320,7 +226,6 @@ impl DurabilityWorker {
         })
     }
 
-    /// The main worker loop using VirtualDisk - runs in a dedicated thread.
     fn disk_worker_loop(
         mut disk: Box<dyn VirtualDisk>,
         request_rx: Receiver<DurabilityRequest>,
@@ -328,7 +233,6 @@ impl DurabilityWorker {
         running: Arc<AtomicBool>,
         stall_flag: Arc<AtomicBool>,
     ) {
-        // Transfer ownership of the disk to this thread.
         disk.transfer_ownership();
 
         while running.load(Ordering::SeqCst) {
@@ -342,31 +246,22 @@ impl DurabilityWorker {
 
                     let completion = Self::process_disk_request(disk.as_mut(), request);
 
-                    // If shutdown, exit after processing
                     if completion.is_none() {
                         break;
                     }
-
                     if let Some(c) = completion {
-                        // Send completion - if receiver is gone, just exit
                         if completion_tx.send(c).is_err() {
                             break;
                         }
                     }
                 }
-                Err(_) => {
-                    // Channel disconnected - exit
-                    break;
-                }
+                Err(_) => break,
             }
         }
 
         running.store(false, Ordering::SeqCst);
     }
 
-    /// Process a single durability request using VirtualDisk.
-    ///
-    /// Returns None for Shutdown, Some(completion) for other requests.
     fn process_disk_request(
         disk: &mut dyn VirtualDisk,
         request: DurabilityRequest,
@@ -440,17 +335,10 @@ impl DurabilityWorker {
         }
     }
 
-    /// Get a clone of the handle for submitting work.
     pub fn handle(&self) -> DurabilityHandle {
         self.handle.clone()
     }
 
-    /// Try to receive a completion without blocking.
-    ///
-    /// Returns:
-    /// - `Ok(Some(completion))` - A completion is available
-    /// - `Ok(None)` - No completion available right now
-    /// - `Err(DurabilityError)` - Channel disconnected (worker died)
     pub fn try_recv_completion(&self) -> Result<Option<DurabilityCompletion>, DurabilityError> {
         match self.completion_rx.try_recv() {
             Ok(completion) => Ok(Some(completion)),
@@ -459,20 +347,12 @@ impl DurabilityWorker {
         }
     }
 
-    /// Receive a completion, blocking until one is available.
-    ///
-    /// Returns:
-    /// - `Ok(completion)` - A completion is available
-    /// - `Err(DurabilityError)` - Channel disconnected (worker died)
     pub fn recv_completion(&self) -> Result<DurabilityCompletion, DurabilityError> {
         self.completion_rx
             .recv()
             .map_err(|_| DurabilityError::ChannelDisconnected)
     }
 
-    /// Drain all available completions without blocking.
-    ///
-    /// Returns a vector of all completions that were ready.
     pub fn drain_completions(&self) -> Vec<DurabilityCompletion> {
         let mut completions = Vec::new();
         while let Ok(Some(c)) = self.try_recv_completion() {
@@ -481,7 +361,6 @@ impl DurabilityWorker {
         completions
     }
 
-    /// Shutdown the worker and wait for it to finish.
     pub fn shutdown_and_join(mut self) -> Result<(), DurabilityError> {
         self.handle.shutdown()?;
 
@@ -500,7 +379,6 @@ impl DurabilityWorker {
         self.stall_flag.load(Ordering::SeqCst)
     }
 
-    /// Check if the worker is still running.
     pub fn is_running(&self) -> bool {
         self.handle.is_running()
     }
@@ -508,10 +386,7 @@ impl DurabilityWorker {
 
 impl Drop for DurabilityWorker {
     fn drop(&mut self) {
-        // Signal shutdown
         let _ = self.handle.shutdown();
-
-        // Wait for thread to finish
         if let Some(handle) = self.thread_handle.take() {
             let _ = handle.join();
         }

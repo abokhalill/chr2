@@ -1,34 +1,20 @@
-//! Typed errors for VSR operations.
-
 use std::fmt;
 
 use crate::engine::durability::DurabilityError;
 use crate::engine::errors::FatalError;
 
-/// Errors that can occur during VSR protocol operations.
 #[derive(Debug)]
 pub enum VsrError {
-    /// Operation requires Primary role but node is not Primary.
     NotPrimary,
-    /// Operation requires Backup role but node is not Backup.
     NotBackup,
-    /// Empty batch submitted.
     EmptyBatch,
-    /// View mismatch - received message from different view.
     ViewMismatch { expected: u64, received: u64 },
-    /// Index mismatch - received entry with unexpected index.
     IndexMismatch { expected: u64, received: u64 },
-    /// Log append failed.
     LogAppendFailed(FatalError),
-    /// Durability operation failed.
     DurabilityFailed(DurabilityError),
-    /// Log read failed.
     LogReadFailed(String),
-    /// Fencing violation - operation rejected due to view fence.
     FencingViolation { view: u64, fence: u64 },
-    /// Catch-up range invalid.
     InvalidCatchUpRange { from: u64, to: u64 },
-    /// No log reader available.
     NoLogReader,
 }
 

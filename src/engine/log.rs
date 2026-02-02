@@ -12,7 +12,7 @@ use crate::engine::format::{
     GENESIS_HASH, HEADER_SIZE, MAX_PAYLOAD_SIZE, SENTINEL_SIZE,
 };
 
-/// Single-writer log. Enforces F4 (no chain fork) via owner_thread.
+/// Enforces F4 (single-writer) via owner_thread.
 pub struct LogWriter {
     file: File,
     write_offset: u64,
@@ -295,41 +295,27 @@ impl LogWriter {
         Ok(())
     }
 
-    /// Get the current write offset (speculative, may be ahead of durable).
     pub fn write_offset(&self) -> u64 {
         self.write_offset
     }
 
-    /// Get the next index that will be assigned (speculative).
     pub fn next_index(&self) -> u64 {
         self.next_index
     }
 
-    /// Get the current tail hash.
     pub fn tail_hash(&self) -> [u8; 16] {
         self.tail_hash
     }
 
-    /// Get the current view ID.
     pub fn view_id(&self) -> u64 {
         self.view_id
     }
 
-    /// Get the raw file descriptor for recovery operations.
     pub fn as_raw_fd(&self) -> i32 {
         self.file.as_raw_fd()
     }
 
-    /// Get the highest committed (durable) index.
-    ///
-    /// VISIBILITY CONTRACT:
-    /// - Returns the highest index that has passed the commit point (fdatasync success)
-    /// - Readers MUST use this to determine what indices are safe to observe
-    /// - Uses Acquire ordering to synchronize with the writer's Release store
-    ///
     /// ENFORCES F3: Readers cannot observe uncommitted indices.
-    ///
-    /// Returns `None` if no entries have been committed yet.
     pub fn committed_index(&self) -> Option<u64> {
         let idx = self.committed_index.load(Ordering::Acquire);
         if idx == u64::MAX {
@@ -339,68 +325,31 @@ impl LogWriter {
         }
     }
 
-    /// Get the number of fdatasync calls made.
-    /// Used for testing group commit efficiency.
     pub fn fdatasync_count(&self) -> u64 {
         self.fdatasync_count.load(Ordering::Relaxed)
     }
 
-    /// Get the last write latency in milliseconds.
-    /// Used for manual tuning before implementing adaptive control loops.
     pub fn last_write_latency_ms(&self) -> u64 {
         self.last_write_latency_ms.load(Ordering::Relaxed)
     }
 
-    /// Enable or disable read-after-write verification.
-    ///
-    /// By default, verification is enabled only in debug builds.
-    /// This is expensive (reads back every write) and should be disabled in production.
-    /// Useful for testing lying drives or debugging storage issues.
     pub fn set_verify_writes(&mut self, enabled: bool) {
         self.verify_writes = enabled;
     }
 
-    /// Check if read-after-write verification is enabled.
     pub fn verify_writes_enabled(&self) -> bool {
         self.verify_writes
     }
 
-    /// Append a batch of entries to the log with a single fdatasync.
-    ///
-    /// # Group Commit Semantics
-    ///
-    /// This method implements group commit for improved I/O throughput:
-    /// - All entries in the batch are written with ONE pwritev call
-    /// - All entries are made durable with ONE fdatasync call
-    /// - Intra-batch hash chaining is maintained (entry\[i\].prev_hash = chain_hash(entry\[i-1\]))
-    ///
-    /// # Arguments
-    /// * `payloads` - Slice of payloads to append as a batch
-    /// * `timestamp_ns` - Consensus timestamp (nanoseconds since epoch), shared by all entries in batch
-    ///
-    /// # Returns
-    /// The last index of the batch on success.
-    ///
-    /// # Errors
-    /// Returns `FatalError` if:
-    /// - Any payload exceeds MAX_PAYLOAD_SIZE
-    /// - pwritev returns less than expected (partial write)
-    /// - fdatasync fails
-    ///
-    /// # Panics
-    /// - Panics if called from wrong thread (FORBIDDEN STATE F4)
+    /// Group commit: single pwritev + O_DSYNC for entire batch.
     pub fn append_batch(
         &mut self,
         payloads: &[Vec<u8>],
         timestamp_ns: u64,
     ) -> Result<u64, FatalError> {
-        // ENFORCES F4: Single-writer invariant
         self.assert_owner_thread();
-
-        // Start timing for latency measurement
         let start_time = std::time::Instant::now();
 
-        // Empty batch is a no-op
         if payloads.is_empty() {
             return match self.committed_index() {
                 Some(idx) => Ok(idx),
@@ -411,7 +360,6 @@ impl LogWriter {
             };
         }
 
-        // Validate all payloads first
         for (i, payload) in payloads.iter().enumerate() {
             if payload.len() > MAX_PAYLOAD_SIZE as usize {
                 return Err(FatalError::PayloadTooLarge {
@@ -427,17 +375,12 @@ impl LogWriter {
             }
         }
 
-        // === Step 1: Construct all headers with intra-batch chaining ===
         let start_index = self.next_index;
         let mut headers: Vec<LogHeader> = Vec::with_capacity(payloads.len());
         let mut chain_hash = self.tail_hash;
 
         for (i, payload) in payloads.iter().enumerate() {
             let index = start_index + i as u64;
-
-            // CRITICAL: Intra-batch chaining
-            // For entry i in batch, prev_hash = chain_hash of entry i-1
-            // For first entry, prev_hash = last_chain_hash on disk
             let prev_hash = chain_hash;
 
             let header = LogHeader::new(
@@ -451,39 +394,29 @@ impl LogWriter {
                 1, // schema_version
             );
 
-            // Compute chain hash for next entry
             chain_hash = compute_chain_hash(&header, payload);
             headers.push(header);
         }
 
-        // === Step 2: Build single buffer for pwritev ===
-        // Calculate total size needed (entries only, sentinel added separately)
         let mut entries_size: usize = 0;
         for (header, _payload) in headers.iter().zip(payloads.iter()) {
             entries_size += frame_size(header.payload_size);
         }
 
-        // Build iovec array: for each entry we need header + payload + padding
-        // Plus one more for the sentinel at the end
-        // Maximum iovecs = 3 * batch_size + 1 (header, payload, padding per entry, plus sentinel)
-        // Linux IOV_MAX is typically 1024, so we limit batch size implicitly
         let mut iovecs: Vec<libc::iovec> = Vec::with_capacity(payloads.len() * 3 + 1);
         let mut padding_buffers: Vec<[u8; 8]> = Vec::with_capacity(payloads.len());
 
         for (header, payload) in headers.iter().zip(payloads.iter()) {
-            // Header iovec
             iovecs.push(libc::iovec {
                 iov_base: header.as_bytes().as_ptr() as *mut libc::c_void,
                 iov_len: HEADER_SIZE,
             });
 
-            // Payload iovec
             iovecs.push(libc::iovec {
                 iov_base: payload.as_ptr() as *mut libc::c_void,
                 iov_len: payload.len(),
             });
 
-            // Padding iovec (if needed)
             let padding_len = calculate_padding(payload.len() as u32);
             if padding_len > 0 {
                 padding_buffers.push([0u8; 8]);
@@ -495,7 +428,6 @@ impl LogWriter {
             }
         }
 
-        // OPTIMIZATION: Add sentinel to the same pwritev call
         let last_index = start_index + payloads.len() as u64 - 1;
         let sentinel = create_sentinel(last_index);
         iovecs.push(libc::iovec {
@@ -505,8 +437,6 @@ impl LogWriter {
 
         let total_size = entries_size + SENTINEL_SIZE;
 
-        // === Step 3: Single pwritev for entire batch + sentinel ===
-        // SAFETY: pwritev is a standard POSIX syscall
         let bytes_written = unsafe {
             libc::pwritev(
                 self.file.as_raw_fd(),
@@ -520,7 +450,6 @@ impl LogWriter {
             return Err(FatalError::IoError(io::Error::last_os_error()));
         }
 
-        // CRITICAL: Partial write is a FatalError per spec
         if bytes_written as usize != total_size {
             return Err(FatalError::IoError(io::Error::new(
                 io::ErrorKind::WriteZero,
@@ -531,34 +460,14 @@ impl LogWriter {
             )));
         }
 
-        // === Step 4: Durability via O_DSYNC ===
-        // With O_DSYNC, pwritev already ensures data is on stable storage.
-        // No fdatasync needed - that would be redundant.
-
-        // Increment sync counter for testing/metrics (counts durable writes)
         self.fdatasync_count.fetch_add(1, Ordering::Relaxed);
 
-        // ============================================================
-        // COMMIT POINT: pwritev with O_DSYNC has returned success.
-        // All entries in batch are now durable.
-        // ============================================================
-
-        // === Step 5: Update state ===
-        // Note: last_index already computed above for sentinel
-
-        // Update committed_index to last entry in batch
+        // COMMIT POINT: O_DSYNC pwritev success = durable
         self.committed_index.store(last_index, Ordering::Release);
-
-        // Update speculative state
-        // Note: write_offset does NOT include sentinel - sentinel is overwritten by next entry
         self.tail_hash = chain_hash;
         self.next_index = last_index + 1;
         self.write_offset += entries_size as u64;
 
-        // Sentinel was already written as part of the pwritev call above (batched optimization)
-        // No separate write_sentinel() call needed
-
-        // Record write latency for metrics
         let latency_ms = start_time.elapsed().as_millis() as u64;
         self.last_write_latency_ms
             .store(latency_ms, Ordering::Relaxed);
@@ -566,13 +475,6 @@ impl LogWriter {
         Ok(last_index)
     }
 
-    /// Append a batch of entries with stream IDs and timestamp.
-    ///
-    /// Like `append_batch` but allows specifying stream_id per entry.
-    ///
-    /// # Arguments
-    /// * `entries` - Slice of (payload, stream_id, flags) tuples
-    /// * `timestamp_ns` - Consensus timestamp (nanoseconds since epoch), shared by all entries
     pub fn append_batch_with_metadata(
         &mut self,
         entries: &[(Vec<u8>, u64, u16)], // (payload, stream_id, flags)
@@ -591,7 +493,6 @@ impl LogWriter {
             };
         }
 
-        // Validate all payloads
         for (i, (payload, _, _)) in entries.iter().enumerate() {
             if payload.len() > MAX_PAYLOAD_SIZE as usize {
                 return Err(FatalError::PayloadTooLarge {
@@ -607,7 +508,6 @@ impl LogWriter {
             }
         }
 
-        // Build headers with intra-batch chaining
         let start_index = self.next_index;
         let mut headers: Vec<LogHeader> = Vec::with_capacity(entries.len());
         let mut chain_hash = self.tail_hash;
@@ -631,7 +531,6 @@ impl LogWriter {
             headers.push(header);
         }
 
-        // Build iovecs
         let mut entries_size: usize = 0;
         let mut iovecs: Vec<libc::iovec> = Vec::with_capacity(entries.len() * 3 + 1);
         let mut padding_buffers: Vec<[u8; 8]> = Vec::with_capacity(entries.len());
@@ -660,7 +559,6 @@ impl LogWriter {
             }
         }
 
-        // OPTIMIZATION: Add sentinel to the same pwritev call
         let last_index = start_index + entries.len() as u64 - 1;
         let sentinel = create_sentinel(last_index);
         iovecs.push(libc::iovec {
@@ -670,7 +568,6 @@ impl LogWriter {
 
         let total_size = entries_size + SENTINEL_SIZE;
 
-        // Single pwritev for entries + sentinel
         let bytes_written = unsafe {
             libc::pwritev(
                 self.file.as_raw_fd(),
@@ -694,34 +591,22 @@ impl LogWriter {
             )));
         }
 
-        // With O_DSYNC, pwritev already ensures durability - no fdatasync needed.
         self.fdatasync_count.fetch_add(1, Ordering::Relaxed);
-
-        // Update state
-        // Note: write_offset does NOT include sentinel - sentinel is overwritten by next entry
         self.committed_index.store(last_index, Ordering::Release);
         self.tail_hash = chain_hash;
         self.next_index = last_index + 1;
         self.write_offset += entries_size as u64;
 
-        // Sentinel was already written as part of the pwritev call above (batched optimization)
-        // No separate write_sentinel() call needed
-
         Ok(last_index)
     }
 
-    /// Truncate the log file to the specified length.
-    /// Used by recovery to remove torn writes.
-    /// Per recovery.md VI: "Truncate the file to current_offset"
     pub fn truncate(&self, len: u64) -> io::Result<()> {
-        // SAFETY: ftruncate is a standard POSIX syscall on a valid fd.
         let result = unsafe { libc::ftruncate(self.file.as_raw_fd(), len as libc::off_t) };
 
         if result < 0 {
             return Err(io::Error::last_os_error());
         }
 
-        // Per recovery.md VI: "Call fsync() on the file descriptor"
         let sync_result = unsafe { libc::fdatasync(self.file.as_raw_fd()) };
 
         if sync_result < 0 {
@@ -731,24 +616,8 @@ impl LogWriter {
         Ok(())
     }
 
-    /// Truncate the log prefix up to (but not including) the given index.
-    ///
-    /// This performs an atomic rewrite of the log file:
-    /// 1. Create a temporary file with the new metadata header
-    /// 2. Copy the suffix (entries from new_base_index onwards)
-    /// 3. fsync the temporary file
-    /// 4. Atomic rename to replace the original
-    ///
-    /// # Arguments
-    /// * `log_path` - Path to the log file
-    /// * `new_base_index` - The new first index in the truncated log
-    /// * `new_base_offset` - The file offset where new_base_index starts (authoritative)
-    /// * `new_base_prev_hash` - The chain hash of entry (new_base_index - 1)
-    ///
-    /// # Safety
-    /// This is a static method that operates on the file system.
-    /// The caller MUST ensure no writer is active on the log file.
-    /// The snapshot covering entries < new_base_index MUST be durable first.
+    /// Atomic prefix truncation via tmp-write-fsync-rename.
+    /// Caller must ensure no active writer and snapshot is durable.
     pub fn truncate_prefix(
         log_path: &Path,
         new_base_index: u64,
