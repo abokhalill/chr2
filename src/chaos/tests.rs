@@ -39,7 +39,7 @@ struct ChaosNode {
     cluster_size: u32,
     last_primary_contact: Instant,
     last_sent: Instant,
-    session_map: crate::vsr::client::SessionMap,
+    session_map: crate::vsr::session::ReplicatedSessionMap,
     pending_requests: HashMap<u64, (u64, u64)>,
     quorum_tracker: Option<crate::vsr::quorum::QuorumTracker>,
     start_view_change_votes: HashMap<u64, std::collections::HashSet<u32>>,
@@ -68,7 +68,7 @@ impl ChaosNode {
             cluster_size,
             last_primary_contact: now,
             last_sent: now,
-            session_map: crate::vsr::client::SessionMap::new(),
+            session_map: crate::vsr::session::ReplicatedSessionMap::new(),
             pending_requests: HashMap::new(),
             quorum_tracker: Some(crate::vsr::quorum::QuorumTracker::new(
                 cluster_size,
@@ -100,7 +100,7 @@ impl ChaosNode {
             cluster_size,
             last_primary_contact: now,
             last_sent: now,
-            session_map: crate::vsr::client::SessionMap::new(),
+            session_map: crate::vsr::session::ReplicatedSessionMap::new(),
             pending_requests: HashMap::new(),
             quorum_tracker: None,
             start_view_change_votes: HashMap::new(),
@@ -160,11 +160,17 @@ impl ChaosNode {
             };
         }
 
-        if let Some(cached) = self
-            .session_map
-            .check_duplicate(request.client_id, request.sequence_number)
-        {
-            return cached;
+        match self.session_map.check(request.client_id, request.sequence_number) {
+            crate::vsr::session::SessionCheckResult::Duplicate(cached) => return cached,
+            crate::vsr::session::SessionCheckResult::Stale { .. } => {
+                return ClientResponse {
+                    sequence_number: request.sequence_number,
+                    result: ClientResult::Error {
+                        message: "Stale request".to_string(),
+                    },
+                };
+            }
+            _ => {}
         }
 
         match self.submit(&request.payload) {
@@ -183,8 +189,12 @@ impl ChaosNode {
                         message: format!("Failed to append: {}", e),
                     },
                 };
-                self.session_map
-                    .record_response(request.client_id, response.clone());
+                self.session_map.record(
+                    request.client_id,
+                    request.sequence_number,
+                    0,
+                    &response.result,
+                );
                 response
             }
         }
@@ -212,8 +222,12 @@ impl ChaosNode {
                     sequence_number,
                     result: ClientResult::Success { log_index },
                 };
-                self.session_map
-                    .record_response(client_id, response.clone());
+                self.session_map.record(
+                    client_id,
+                    sequence_number,
+                    log_index,
+                    &response.result,
+                );
                 responses.push((client_id, response));
             }
         }
@@ -592,12 +606,12 @@ impl ChaosNode {
     }
 
     #[allow(dead_code)]
-    fn session_map(&self) -> &crate::vsr::client::SessionMap {
+    fn session_map(&self) -> &crate::vsr::session::ReplicatedSessionMap {
         &self.session_map
     }
 
     #[allow(dead_code)]
-    fn restore_session_map(&mut self, session_map: crate::vsr::client::SessionMap) {
+    fn restore_session_map(&mut self, session_map: crate::vsr::session::ReplicatedSessionMap) {
         self.session_map = session_map;
     }
 }

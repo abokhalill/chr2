@@ -15,7 +15,7 @@ use crate::engine::reader::{CommittedState, LogReader};
 use crate::kernel::executor::Executor;
 use crate::kernel::traits::ChrApplication;
 
-use super::client::SessionMap;
+use super::session::{ReplicatedSessionMap, SessionCheckResult};
 use super::error::VsrError;
 use super::message::{
     ClientRequest, ClientResponse, ClientResult, LogEntrySummary, PreparedEntry, VsrMessage,
@@ -289,8 +289,8 @@ pub struct VsrNode<A: ChrApplication> {
     // =========================================================================
     // CLIENT SESSION STATE
     // =========================================================================
-    /// Session map for client request idempotency.
-    pub session_map: SessionMap,
+    /// Session map for client request idempotency (deterministic BTreeMap).
+    pub session_map: ReplicatedSessionMap,
     /// Pending client requests waiting for commit.
     /// Key: log_index, Value: (client_id, sequence_number)
     pub pending_requests: HashMap<u64, (u64, u64)>,
@@ -423,7 +423,7 @@ impl<A: ChrApplication> VsrNode<A> {
             start_view_change_votes: HashMap::new(),
             do_view_change_msgs: HashMap::new(),
             sent_do_view_change: false,
-            session_map: SessionMap::new(),
+            session_map: ReplicatedSessionMap::new(),
             pending_requests: HashMap::new(),
             batcher: RequestBatcher::new(),
             max_inflight_requests: DEFAULT_MAX_INFLIGHT_REQUESTS,
@@ -483,7 +483,7 @@ impl<A: ChrApplication> VsrNode<A> {
             start_view_change_votes: HashMap::new(),
             do_view_change_msgs: HashMap::new(),
             sent_do_view_change: false,
-            session_map: SessionMap::new(),
+            session_map: ReplicatedSessionMap::new(),
             pending_requests: HashMap::new(),
             batcher: RequestBatcher::new(),
             max_inflight_requests: DEFAULT_MAX_INFLIGHT_REQUESTS,
@@ -942,11 +942,20 @@ impl<A: ChrApplication> VsrNode<A> {
         // Step 2: Check for duplicate request (idempotency)
         // CRITICAL: This MUST happen BEFORE the in-flight check.
         // Retries of already-committed requests are ALWAYS free and never blocked.
-        if let Some(cached) = self
-            .session_map
-            .check_duplicate(request.client_id, request.sequence_number)
-        {
-            return cached;
+        match self.session_map.check(request.client_id, request.sequence_number) {
+            SessionCheckResult::Duplicate(cached) => return cached,
+            SessionCheckResult::Stale { sequence, lowest } => {
+                return ClientResponse {
+                    sequence_number: request.sequence_number,
+                    result: ClientResult::Error {
+                        message: format!(
+                            "Stale request: sequence {} < lowest retained {}",
+                            sequence, lowest
+                        ),
+                    },
+                };
+            }
+            SessionCheckResult::New | SessionCheckResult::OutOfOrder { .. } => {}
         }
 
         // Step 3: Admission control - check in-flight limit and replication gap
@@ -989,8 +998,12 @@ impl<A: ChrApplication> VsrNode<A> {
                 };
 
                 // Record the error response for idempotency
-                self.session_map
-                    .record_response(request.client_id, response.clone());
+                self.session_map.record(
+                    request.client_id,
+                    request.sequence_number,
+                    0,
+                    &response.result,
+                );
 
                 response
             }
@@ -1028,8 +1041,12 @@ impl<A: ChrApplication> VsrNode<A> {
                 };
 
                 // Record for idempotency
-                self.session_map
-                    .record_response(client_id, response.clone());
+                self.session_map.record(
+                    client_id,
+                    sequence_number,
+                    log_index,
+                    &response.result,
+                );
 
                 responses.push((client_id, response));
             }
@@ -1039,12 +1056,12 @@ impl<A: ChrApplication> VsrNode<A> {
     }
 
     /// Get the session map (for snapshotting).
-    pub fn session_map(&self) -> &SessionMap {
+    pub fn session_map(&self) -> &ReplicatedSessionMap {
         &self.session_map
     }
 
     /// Restore the session map (from snapshot).
-    pub fn restore_session_map(&mut self, session_map: SessionMap) {
+    pub fn restore_session_map(&mut self, session_map: ReplicatedSessionMap) {
         self.session_map = session_map;
     }
 

@@ -13,7 +13,7 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 
 use crate::engine::log::LogWriter;
 use crate::engine::reader::CommittedState;
-use crate::vsr::client::SessionMap;
+use crate::vsr::session::ReplicatedSessionMap;
 use crate::vsr::message::{
     ClientRequest, ClientResponse, ClientResult, LogEntrySummary, VsrMessage,
 };
@@ -41,7 +41,7 @@ pub struct NodeState {
     pub view: u64,
     pub committed_index: Option<u64>,
     pub next_index: u64,
-    pub session_map: SessionMap,
+    pub session_map: ReplicatedSessionMap,
 }
 
 /// Configuration for creating a node.
@@ -141,7 +141,7 @@ struct NodeRunner {
     cluster_size: u32,
     last_primary_contact: Instant,
     last_sent: Instant,
-    session_map: SessionMap,
+    session_map: ReplicatedSessionMap,
     pending_requests: HashMap<u64, (u64, u64, Sender<ClientResponse>)>,
     quorum_tracker: Option<QuorumTracker>,
     start_view_change_votes: HashMap<u64, std::collections::HashSet<u32>>,
@@ -182,7 +182,7 @@ impl NodeRunner {
             cluster_size: config.cluster_size,
             last_primary_contact: now,
             last_sent: now,
-            session_map: SessionMap::new(),
+            session_map: ReplicatedSessionMap::new(),
             pending_requests: HashMap::new(),
             quorum_tracker,
             start_view_change_votes: HashMap::new(),
@@ -258,7 +258,7 @@ impl NodeRunner {
             cluster_size: config.cluster_size,
             last_primary_contact: now,
             last_sent: now,
-            session_map: SessionMap::new(),
+            session_map: ReplicatedSessionMap::new(),
             pending_requests: HashMap::new(),
             quorum_tracker,
             start_view_change_votes: HashMap::new(),
@@ -331,11 +331,17 @@ impl NodeRunner {
             };
         }
 
-        if let Some(cached) = self
-            .session_map
-            .check_duplicate(request.client_id, request.sequence_number)
-        {
-            return cached;
+        match self.session_map.check(request.client_id, request.sequence_number) {
+            crate::vsr::session::SessionCheckResult::Duplicate(cached) => return cached,
+            crate::vsr::session::SessionCheckResult::Stale { .. } => {
+                return ClientResponse {
+                    sequence_number: request.sequence_number,
+                    result: ClientResult::Error {
+                        message: "Stale request".to_string(),
+                    },
+                };
+            }
+            _ => {}
         }
 
         match self.submit(&request.payload) {
@@ -356,8 +362,12 @@ impl NodeRunner {
                         message: format!("Failed to append: {}", e),
                     },
                 };
-                self.session_map
-                    .record_response(request.client_id, response.clone());
+                self.session_map.record(
+                    request.client_id,
+                    request.sequence_number,
+                    0,
+                    &response.result,
+                );
                 response
             }
         }
@@ -754,8 +764,12 @@ impl NodeRunner {
                     sequence_number,
                     result: ClientResult::Success { log_index },
                 };
-                self.session_map
-                    .record_response(client_id, response.clone());
+                self.session_map.record(
+                    client_id,
+                    sequence_number,
+                    log_index,
+                    &response.result,
+                );
                 let _ = resp_tx.send(response);
             }
         }
