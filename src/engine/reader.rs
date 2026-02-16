@@ -311,6 +311,28 @@ impl LogReader {
         Ok(entries)
     }
 
+    /// Read a range of log entries without committed visibility enforcement.
+    /// Used exclusively during view-change to collect uncommitted suffix entries
+    /// that are physically durable on disk but not yet consensus-committed.
+    pub fn read_range_unchecked(&mut self, start: u64, end: u64) -> Result<Vec<LogEntry>, ReadError> {
+        if start > end {
+            return Ok(Vec::new());
+        }
+
+        let mut entries = Vec::with_capacity((end - start + 1) as usize);
+
+        for idx in start..=end {
+            match self.read_entry_internal(idx) {
+                Ok(entry) => entries.push(entry),
+                Err(ReadError::TruncatedDuringRead { .. }) => break,
+                Err(ReadError::IndexNotFound { .. }) => break,
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(entries)
+    }
+
     pub fn scan_all(&mut self) -> Result<Vec<LogEntry>, ReadError> {
         let committed = self.committed_state.committed_index.load(Ordering::Acquire);
 

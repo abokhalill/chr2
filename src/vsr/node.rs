@@ -2090,14 +2090,17 @@ impl<A: ChrApplication> VsrNode<A> {
         };
 
         // Read entries from commit_index + 1 to last_log_index
-        // Note: These are uncommitted entries, so we read directly without visibility check
+        // These are uncommitted entries: bypass committed visibility check
         let start = commit_index + 1;
-        match reader.read_range(start, last_log_index) {
+        match reader.read_range_unchecked(start, last_log_index) {
             Ok(entries) => entries
                 .into_iter()
                 .map(|e| LogEntrySummary {
                     index: e.index,
                     payload: e.payload,
+                    timestamp_ns: e.timestamp_ns,
+                    stream_id: e.stream_id,
+                    flags: e.flags,
                 })
                 .collect(),
             Err(e) => {
@@ -2232,11 +2235,13 @@ impl<A: ChrApplication> VsrNode<A> {
             .unwrap();
 
         let master_last_index = best.last_log_index;
-        let _master_last_hash = best.last_log_hash;
+        let master_node_id = best.node_id;
+        let master_suffix = best.log_suffix.clone();
         let master_commit_index = msgs.iter().map(|m| m.commit_index).max().unwrap_or(0);
 
         debug!(
             node_id = self.node_id,
+            master_node_id,
             master_last_index, master_commit_index, "Master truth established for view change"
         );
 
@@ -2253,8 +2258,34 @@ impl<A: ChrApplication> VsrNode<A> {
             self.committed_state.advance(master_commit_index);
         }
 
-        // Collect log entries to send to backups
-        // For simplicity, we send entries from commit_index+1 to last_log_index
+        // Install the master log suffix into our local log.
+        // If the best log came from a remote node, we must durably write its
+        // suffix entries before we can serve as Primary.
+        if master_node_id != self.node_id && !master_suffix.is_empty() {
+            debug!(
+                node_id = self.node_id,
+                master_node_id,
+                suffix_len = master_suffix.len(),
+                "Installing remote master log suffix"
+            );
+            for entry in &master_suffix {
+                if entry.index == self.writer.next_index() {
+                    if let Err(e) = self.writer.append(
+                        &entry.payload,
+                        entry.stream_id,
+                        entry.flags,
+                        entry.timestamp_ns,
+                    ) {
+                        panic!(
+                            "FATAL: Node {}: Failed to install master suffix entry {}: {}",
+                            self.node_id, entry.index, e
+                        );
+                    }
+                }
+            }
+        }
+
+        // Collect the authoritative suffix from our (now up-to-date) local log
         let log_entries = self.collect_log_entries(master_commit_index + 1, master_last_index);
 
         // Broadcast StartView to all backups
@@ -2294,13 +2325,16 @@ impl<A: ChrApplication> VsrNode<A> {
             }
         };
 
-        // Read entries from the log
-        match reader.read_range(start, end) {
+        // Read entries bypassing committed visibility (view-change path)
+        match reader.read_range_unchecked(start, end) {
             Ok(entries) => entries
                 .into_iter()
                 .map(|e| LogEntrySummary {
                     index: e.index,
                     payload: e.payload,
+                    timestamp_ns: e.timestamp_ns,
+                    stream_id: e.stream_id,
+                    flags: e.flags,
                 })
                 .collect(),
             Err(e) => {
@@ -2387,16 +2421,15 @@ impl<A: ChrApplication> VsrNode<A> {
                 "Applying log entries from StartView"
             );
 
-            // Get consensus timestamp for these entries (use current time as fallback)
-            let timestamp_ns = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos() as u64;
-
             for entry in &log_entries {
                 // Only append if this is the next expected entry
                 if entry.index == self.next_expected_index {
-                    if let Err(e) = self.writer.append(&entry.payload, 0, 0, timestamp_ns) {
+                    if let Err(e) = self.writer.append(
+                        &entry.payload,
+                        entry.stream_id,
+                        entry.flags,
+                        entry.timestamp_ns,
+                    ) {
                         // Log append failure is fatal
                         panic!(
                             "FATAL: Node {}: Failed to append entry {} from StartView: {}. \

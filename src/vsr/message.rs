@@ -76,6 +76,9 @@ pub struct CatchUpEntry {
 pub struct LogEntrySummary {
     pub index: u64,
     pub payload: Vec<u8>,
+    pub timestamp_ns: u64,
+    pub stream_id: u64,
+    pub flags: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
